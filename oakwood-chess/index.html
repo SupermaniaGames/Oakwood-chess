@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Oakwood Chess</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>♞</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="app">
+    <header class="titlebar">
+      <h1>Oakwood <span>Chess</span></h1>
+      <p class="tagline">A quiet board for you and a friend.</p>
+    </header>
+
+    <main class="table">
+
+      <section class="board-wrap">
+        <div class="board-frame">
+          <div id="board" class="board" aria-label="Chess board"></div>
+          <div class="files" aria-hidden="true">
+            <span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span>
+          </div>
+          <div class="ranks" aria-hidden="true">
+            <span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span>
+          </div>
+        </div>
+        <div id="status" class="status">Set up a game to begin.</div>
+      </section>
+
+      <aside class="panel">
+
+        <div id="lobby" class="card">
+          <h2>Play with a friend</h2>
+          <p class="muted">Create a room and send the link to whoever you're playing. No sign-up, nothing installed &mdash; it connects straight to their browser.</p>
+          <button id="btn-create" class="btn btn-primary">Create a room</button>
+          <div class="divider"><span>or</span></div>
+          <button id="btn-local" class="btn btn-ghost">Play locally, one board two players</button>
+        </div>
+
+        <div id="room-info" class="card hidden">
+          <h2>Room ready</h2>
+          <p class="muted">Send this link to your friend. Once they open it, the game starts.</p>
+          <div class="link-row">
+            <input id="room-link" type="text" readonly />
+            <button id="btn-copy" class="btn btn-small">Copy</button>
+          </div>
+          <p id="conn-state" class="conn-state">Waiting for your friend to join&hellip;</p>
+        </div>
+
+        <div id="game-info" class="card hidden">
+          <div class="turn-row">
+            <div class="side-tag" id="tag-you">You &middot; <span id="you-color">White</span></div>
+            <div class="side-tag" id="tag-them">Them &middot; <span id="them-color">Black</span></div>
+          </div>
+          <h3>Moves</h3>
+          <ol id="move-list" class="move-list"></ol>
+          <div class="controls">
+            <button id="btn-flip" class="btn btn-ghost btn-small">Flip board</button>
+            <button id="btn-resign" class="btn btn-danger btn-small hidden">Resign</button>
+            <button id="btn-new" class="btn btn-ghost btn-small">New game</button>
+          </div>
+        </div>
+
+        <div id="promo-modal" class="modal hidden">
+          <div class="modal-card">
+            <p>Promote your pawn to:</p>
+            <div class="promo-choices">
+              <button data-piece="q">♛ Queen</button>
+              <button data-piece="r">♜ Rook</button>
+              <button data-piece="b">♝ Bishop</button>
+              <button data-piece="n">♞ Knight</button>
+            </div>
+          </div>
+        </div>
+
+      </aside>
+
+    </main>
+
+    <footer class="foot">Runs entirely in the browser &mdash; your moves travel peer-to-peer, nothing is stored on a server.</footer>
+  </div>
+
+  <script src="vendor/peerjs.min.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
