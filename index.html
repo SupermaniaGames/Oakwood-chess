@@ -20,7 +20,7 @@
 
     <main class="table">
 
-      <section class="board-wrap">
+      <section id="board-wrap" class="board-wrap hidden">
         <div class="board-frame">
           <div id="board" class="board" aria-label="Chess board"></div>
           <div class="files" aria-hidden="true">
@@ -30,40 +30,112 @@
             <span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span>
           </div>
         </div>
-        <div id="status" class="status">Set up a game to begin.</div>
+        <div id="status" class="status">&nbsp;</div>
       </section>
 
       <aside class="panel">
 
-        <div id="lobby" class="card">
-          <h2>Play with a friend</h2>
-          <p class="muted">Create a room and send the link to whoever you're playing. No sign-up, nothing installed &mdash; it connects straight to their browser.</p>
-          <button id="btn-create" class="btn btn-primary">Create a room</button>
-          <div class="divider"><span>or</span></div>
-          <button id="btn-local" class="btn btn-ghost">Play locally, one board two players</button>
+        <!-- HOME -->
+        <div id="screen-home" class="screen">
+
+          <div id="resume-card" class="card accent-card hidden">
+            <h2>Game in progress</h2>
+            <p class="muted">You left a local game partway through.</p>
+            <div class="controls">
+              <button id="btn-resume" class="btn btn-primary btn-small">Resume</button>
+              <button id="btn-discard-resume" class="btn btn-ghost btn-small">Discard</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>New game</h2>
+            <p class="muted">Choose a time control, then play locally or invite a friend.</p>
+            <div id="time-control" class="chip-row" role="radiogroup" aria-label="Time control">
+              <button class="chip" data-tc="untimed">Untimed</button>
+              <button class="chip" data-tc="b5">5 min</button>
+              <button class="chip" data-tc="b10">10 min</button>
+              <button class="chip" data-tc="b15">15 min</button>
+            </div>
+            <button id="btn-local" class="btn btn-primary">Play locally, one board two players</button>
+            <div class="divider"><span>or</span></div>
+            <button id="btn-create" class="btn btn-ghost">Create a room for a friend</button>
+          </div>
+
+          <div class="card">
+            <h2>History</h2>
+            <p class="muted" id="history-empty">No finished games yet.</p>
+            <ol id="history-list" class="history-list"></ol>
+          </div>
         </div>
 
-        <div id="room-info" class="card hidden">
-          <h2>Room ready</h2>
-          <p class="muted">Send this link to your friend. Once they open it, the game starts.</p>
-          <div class="link-row">
-            <input id="room-link" type="text" readonly />
-            <button id="btn-copy" class="btn btn-small">Copy</button>
+        <!-- ROOM / CONNECTING -->
+        <div id="screen-room" class="screen hidden">
+          <div class="card">
+            <h2 id="room-heading">Room ready</h2>
+            <p class="muted" id="room-sub">Send this link to your friend. Once they open it, the game starts.</p>
+            <div id="room-link-row" class="link-row">
+              <input id="room-link" type="text" readonly />
+              <button id="btn-copy" class="btn btn-small">Copy</button>
+            </div>
+            <p id="conn-state" class="conn-state">Waiting for your friend to join&hellip;</p>
+            <button id="btn-cancel-room" class="btn btn-ghost btn-small">Back to home</button>
           </div>
-          <p id="conn-state" class="conn-state">Waiting for your friend to join&hellip;</p>
         </div>
 
-        <div id="game-info" class="card hidden">
-          <div class="turn-row">
-            <div class="side-tag" id="tag-you">You &middot; <span id="you-color">White</span></div>
-            <div class="side-tag" id="tag-them">Them &middot; <span id="them-color">Black</span></div>
+        <!-- PLAYING -->
+        <div id="screen-game" class="screen hidden">
+          <div class="card">
+            <div class="turn-row">
+              <div class="side-tag" id="tag-you">
+                <span class="side-label">You &middot; <span id="you-color">White</span></span>
+                <span class="side-clock" id="clock-you"></span>
+              </div>
+              <div class="side-tag" id="tag-them">
+                <span class="side-label" id="them-label">Black</span>
+                <span class="side-clock" id="clock-them"></span>
+              </div>
+            </div>
+
+            <div id="request-banner" class="request-banner hidden">
+              <p id="request-text"></p>
+              <div class="controls">
+                <button id="btn-request-accept" class="btn btn-primary btn-small">Accept</button>
+                <button id="btn-request-decline" class="btn btn-ghost btn-small">Decline</button>
+              </div>
+            </div>
+
+            <h3>Moves</h3>
+            <ol id="move-list" class="move-list"></ol>
+
+            <div class="controls">
+              <button id="btn-flip" class="btn btn-ghost btn-small">Flip board</button>
+              <button id="btn-undo" class="btn btn-ghost btn-small">Undo</button>
+              <button id="btn-resign" class="btn btn-danger btn-small hidden">Resign</button>
+              <button id="btn-rematch" class="btn btn-ghost btn-small hidden">Rematch</button>
+              <button id="btn-home" class="btn btn-ghost btn-small">Home</button>
+            </div>
           </div>
-          <h3>Moves</h3>
-          <ol id="move-list" class="move-list"></ol>
-          <div class="controls">
-            <button id="btn-flip" class="btn btn-ghost btn-small">Flip board</button>
-            <button id="btn-resign" class="btn btn-danger btn-small hidden">Resign</button>
-            <button id="btn-new" class="btn btn-ghost btn-small">New game</button>
+
+          <div id="chat-card" class="card hidden">
+            <h3 class="chat-title">Chat</h3>
+            <ol id="chat-list" class="chat-list"></ol>
+            <form id="chat-form" class="chat-form">
+              <input id="chat-input" type="text" maxlength="200" autocomplete="off" placeholder="Say something…" />
+              <button type="submit" class="btn btn-small">Send</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- HISTORY REPLAY -->
+        <div id="screen-replay" class="screen hidden">
+          <div class="card">
+            <h2>Replay</h2>
+            <p class="muted" id="replay-summary"></p>
+            <div class="controls">
+              <button id="btn-replay-prev" class="btn btn-ghost btn-small">&larr; Prev</button>
+              <button id="btn-replay-next" class="btn btn-ghost btn-small">Next &rarr;</button>
+            </div>
+            <button id="btn-replay-back" class="btn btn-ghost btn-small" style="margin-top:10px;">Back to home</button>
           </div>
         </div>
 
@@ -83,7 +155,7 @@
 
     </main>
 
-    <footer class="foot">Runs entirely in the browser &mdash; your moves travel peer-to-peer, nothing is stored on a server.</footer>
+    <footer class="foot">Runs entirely in the browser &mdash; games are saved only on this device.</footer>
   </div>
 
   <script src="vendor/peerjs.min.js"></script>

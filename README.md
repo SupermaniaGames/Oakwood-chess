@@ -6,16 +6,41 @@ backend server to run — it's a handful of static files.
 
 ## Play it
 
+- **Pick a time control** on the home screen (untimed, 5, 10 or 15 minutes)
+  before starting either kind of game.
 - **Locally on one PC:** click "Play locally, one board two players" and pass
-  the keyboard back and forth. Not really keyboard — you just take turns
-  clicking the board.
-- **Online with a friend:** click "Create a room", then copy the link and
-  send it (text, Discord, email, whatever) to your friend. When they open it,
-  you're connected and playing. You're White, they're Black.
+  the device back and forth, taking turns clicking the board.
+- **Online with a friend:** click "Create a room for a friend", then copy the
+  link and send it (text, Discord, email, whatever) to your friend. When they
+  open it, you're connected and playing. You're White, they're Black.
 
 Moves travel directly between the two browsers over WebRTC (peer-to-peer) —
 the only outside service involved is PeerJS's free public broker, which just
-helps the two browsers find each other. No game data is stored anywhere.
+helps the two browsers find each other.
+
+## Saving & history
+
+- **Resume:** if you leave a local game partway through (the "Home" button),
+  it's saved automatically and a "Resume" card appears next time you're on
+  the home screen — including the clock, if you're using one.
+- **History:** every finished game — local or online — is logged on the home
+  screen (result, date, mode). Click one to step through it move by move in
+  a read-only replay.
+- This is all stored in this browser's `localStorage`, on this device only.
+  There's no account and nothing is sent to a server, so clearing your
+  browser data or switching devices will lose it. If you'd rather have games
+  saved centrally (so they follow you across devices), that needs a small
+  backend and sign-in — happy to add that as a next step if useful.
+
+## While playing
+
+- **Clock:** shown next to each player when a time control is selected; a
+  side that runs out loses automatically.
+- **Chat:** a simple text chat is available in online games.
+- **Undo:** in a local game it's instant. In an online game it's a request —
+  your friend has to accept it, since it affects both of you.
+- **Rematch:** local restarts instantly; online sends a request the same way
+  undo does, and swaps who plays White each time.
 
 ## Run it locally
 
@@ -66,8 +91,10 @@ a plain S3 bucket) — there's no server-side code to configure.
 ```
 index.html        Page structure
 style.css         Visual design
-main.js           Board rendering, move handling, game state
+main.js           Screens, board rendering, move handling, game state
 multiplayer.js    Thin wrapper around PeerJS for the online room
+clock.js          Per-player countdown clock
+storage.js        localStorage helpers (resume + history)
 vendor/chess.js   Move generation & rules (chess.js, vendored, MIT/BSD)
 vendor/peerjs.min.js   WebRTC peer connections (PeerJS, vendored, MIT)
 ```
