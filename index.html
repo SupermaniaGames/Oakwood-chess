@@ -2,9 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Oakwood Chess</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>♞</text></svg>" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#171a14" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Oakwood" />
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -17,6 +23,14 @@
       <h1>Oakwood <span>Chess</span></h1>
       <p class="tagline">A quiet board for you and a friend.</p>
     </header>
+
+    <div id="install-banner" class="install-banner hidden">
+      <p id="install-text">Install Oakwood Chess for quick access from your home screen.</p>
+      <div class="controls">
+        <button id="btn-install" class="btn btn-primary btn-small">Install</button>
+        <button id="btn-install-dismiss" class="btn btn-ghost btn-small">Not now</button>
+      </div>
+    </div>
 
     <main class="table">
 
@@ -37,6 +51,16 @@
 
         <!-- HOME -->
         <div id="screen-home" class="screen">
+
+          <div class="card">
+            <h2>Your rating</h2>
+            <p class="muted">A simple Elo rating from your online games, kept on this device. Set a name so your friend recognizes you in chat.</p>
+            <input id="profile-name" type="text" maxlength="24" placeholder="Your name" class="text-input" />
+            <div class="rating-row">
+              <span class="rating-badge"><span id="rating-value">1200</span><small>rating</small></span>
+              <span class="muted" id="rating-record" style="margin:0;">No rated games yet.</span>
+            </div>
+          </div>
 
           <div id="resume-card" class="card accent-card hidden">
             <h2>Game in progress</h2>
@@ -62,6 +86,16 @@
           </div>
 
           <div class="card">
+            <h2>Join a friend's room</h2>
+            <p class="muted">Got a code from a friend? Type it in — or just open the link they sent you.</p>
+            <div class="link-row">
+              <input id="join-code" type="text" maxlength="6" placeholder="e.g. K7QX" class="text-input code-input" autocapitalize="characters" autocomplete="off" />
+              <button id="btn-join-code" class="btn btn-primary btn-small">Join</button>
+            </div>
+            <p id="join-error" class="conn-state error hidden"></p>
+          </div>
+
+          <div class="card">
             <h2>History</h2>
             <p class="muted" id="history-empty">No finished games yet.</p>
             <ol id="history-list" class="history-list"></ol>
@@ -72,7 +106,16 @@
         <div id="screen-room" class="screen hidden">
           <div class="card">
             <h2 id="room-heading">Room ready</h2>
-            <p class="muted" id="room-sub">Send this link to your friend. Once they open it, the game starts.</p>
+            <p class="muted" id="room-sub">Give your friend the code, or send the link — either one works.</p>
+
+            <div id="room-code-block" class="code-block">
+              <span class="code-block-label">Room code</span>
+              <div class="link-row">
+                <input id="room-code" type="text" readonly class="code-display" />
+                <button id="btn-copy-code" class="btn btn-small">Copy</button>
+              </div>
+            </div>
+
             <div id="room-link-row" class="link-row">
               <input id="room-link" type="text" readonly />
               <button id="btn-copy" class="btn btn-small">Copy</button>

@@ -42,3 +42,18 @@ export function getHistory() {
 export function clearHistory() {
   localStorage.removeItem(KEY_HISTORY);
 }
+
+const KEY_PROFILE = "oakwood.profile";
+const DEFAULT_PROFILE = { name: "", rating: 1200, games: 0 };
+
+export function getProfile() {
+  return { ...DEFAULT_PROFILE, ...safeParse(localStorage.getItem(KEY_PROFILE), {}) };
+}
+
+export function saveProfile(profile) {
+  try {
+    localStorage.setItem(KEY_PROFILE, JSON.stringify(profile));
+  } catch {
+    /* storage full or unavailable — silently skip */
+  }
+}

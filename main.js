@@ -7,7 +7,30 @@ import {
   clearInProgressLocalGame,
   addHistoryEntry,
   getHistory,
+  getProfile,
+  saveProfile,
 } from "./storage.js";
+
+const PEER_PREFIX = "oakwood-chess-";
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — easy to read aloud
+const ELO_K = 32;
+
+function generateRoomCode(len = 4) {
+  let out = "";
+  for (let i = 0; i < len; i++) out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  return out;
+}
+
+function describeConnError(err) {
+  const type = err?.type;
+  if (type === "peer-unavailable")
+    return "That code doesn't match an open room. Double-check it with your friend, or ask them to create a new one.";
+  if (type === "network") return "Network problem — check your connection and try again.";
+  if (type === "disconnected") return "Lost connection to the matchmaking server. Try again in a moment.";
+  if (type === "browser-incompatible")
+    return "This browser doesn't support the connection needed for online play.";
+  return "Connection problem: " + (type || err?.message || "unknown error");
+}
 
 const PIECES = {
   w: { p: "♙", n: "♘", b: "♗", r: "♖", q: "♕", k: "♔" },
@@ -37,6 +60,9 @@ let outgoingRequest = null; // "undo" | "rematch" | null — a request we sent, 
 let incomingRequestType = null; // "undo" | "rematch" | null — a request we're being asked about
 let replayFens = [];
 let replayIndex = 0;
+let currentRoomCode = "";
+let opponentName = "Friend";
+let opponentRating = null;
 
 // ---------- Screen management ----------
 
@@ -157,7 +183,7 @@ function updateSideLabels() {
     themLabel.textContent = "Black";
   } else {
     youLabel.innerHTML = `You &middot; ${myColor === "w" ? "White" : "Black"}`;
-    themLabel.textContent = myColor === "w" ? "Black" : "White";
+    themLabel.textContent = `${opponentName} · ${myColor === "w" ? "Black" : "White"}`;
   }
 }
 
@@ -178,7 +204,7 @@ function onClockFlag(color) {
   if (gameRecorded) return;
   const winnerText = `${color === "w" ? "Black" : "White"} wins on time.`;
   if (mode === "online") room.send({ type: "flag", color });
-  endGame(winnerText);
+  endGame(winnerText, mode === "online" ? (color === myColor ? "loss" : "win") : null);
   render();
 }
 
@@ -348,19 +374,26 @@ function startOnlineAsHost() {
   myColor = "w";
   game.reset();
   flipped = false;
+  opponentName = "Friend";
+  opponentRating = null;
   resetTransientState();
   showScreen("room");
   el("room-heading").textContent = "Room ready";
-  el("room-sub").textContent = "Send this link to your friend. Once they open it, the game starts.";
+  el("room-sub").textContent = "Give your friend the code, or send the link — either one works.";
+  el("room-code-block").classList.remove("hidden");
   el("room-link-row").classList.remove("hidden");
   el("conn-state").textContent = "Waiting for your friend to join…";
+  el("conn-state").classList.remove("error");
 
+  let attempts = 0;
   room = new Room({
-    onOpen: (id) => {
-      el("room-link").value = `${location.origin}${location.pathname}?join=${id}`;
+    onOpen: () => {
+      el("room-code").value = currentRoomCode;
+      el("room-link").value = `${location.origin}${location.pathname}?join=${currentRoomCode}`;
     },
     onConnected: () => {
-      room.send({ type: "init", timeControl: timeControlKey });
+      const profile = getProfile();
+      room.send({ type: "init", timeControl: timeControlKey, name: profile.name || "Friend", rating: profile.rating });
       beginOnlineGame();
     },
     onData: handlePeerData,
@@ -369,22 +402,37 @@ function startOnlineAsHost() {
       if (clock) clock.stop();
     },
     onError: (err) => {
-      el("conn-state").textContent = "Connection problem: " + (err?.type || err?.message || "unknown error");
+      // A collision on the short code is routine (small ID space, shared
+      // broker) — just mint a new one and try again, a few times.
+      if (err?.type === "unavailable-id" && attempts < 6) {
+        attempts += 1;
+        currentRoomCode = generateRoomCode();
+        room.host(PEER_PREFIX + currentRoomCode);
+        return;
+      }
+      el("conn-state").textContent = describeConnError(err);
+      el("conn-state").classList.add("error");
     },
   });
-  room.host();
+  currentRoomCode = generateRoomCode();
+  room.host(PEER_PREFIX + currentRoomCode);
 }
 
-function startOnlineAsGuest(hostId) {
+function startOnlineAsGuest(rawCode) {
+  const code = String(rawCode || "").trim().toUpperCase();
   mode = "online";
   myColor = "b";
   game.reset();
   flipped = true;
+  opponentName = "Friend";
+  opponentRating = null;
   resetTransientState();
   showScreen("room");
   el("room-heading").textContent = "Joining room…";
+  el("room-code-block").classList.add("hidden");
   el("room-link-row").classList.add("hidden");
   el("conn-state").textContent = "Connecting to your friend…";
+  el("conn-state").classList.remove("error");
 
   room = new Room({
     onConnected: () => {
@@ -393,6 +441,10 @@ function startOnlineAsGuest(hostId) {
     onData: (data) => {
       if (data.type === "init") {
         timeControlKey = data.timeControl;
+        opponentName = data.name || "Friend";
+        opponentRating = typeof data.rating === "number" ? data.rating : 1200;
+        const profile = getProfile();
+        room.send({ type: "init-ack", name: profile.name || "Friend", rating: profile.rating });
         beginOnlineGame();
         return;
       }
@@ -403,10 +455,11 @@ function startOnlineAsGuest(hostId) {
       if (clock) clock.stop();
     },
     onError: (err) => {
-      el("conn-state").textContent = "Connection problem: " + (err?.type || err?.message || "unknown error");
+      el("conn-state").textContent = describeConnError(err);
+      el("conn-state").classList.add("error");
     },
   });
-  room.join(hostId);
+  room.join(PEER_PREFIX + code);
 }
 
 function beginOnlineGame() {
@@ -432,15 +485,20 @@ function handlePeerData(data) {
       render();
       break;
     case "resign":
-      endGame("Your friend resigned. You win!");
+      endGame("Your friend resigned. You win!", "win");
       render();
       break;
     case "flag":
-      endGame(`${data.color === "w" ? "Black" : "White"} wins on time.`);
+      endGame(`${data.color === "w" ? "Black" : "White"} wins on time.`, data.color === myColor ? "loss" : "win");
       render();
       break;
+    case "init-ack":
+      opponentName = data.name || "Friend";
+      opponentRating = typeof data.rating === "number" ? data.rating : 1200;
+      updateSideLabels();
+      break;
     case "chat":
-      appendChat("Friend", data.text);
+      appendChat(opponentName, data.text);
       break;
     case "undo-request":
       showRequestBanner("Your friend would like to undo the last move.", "undo");
@@ -470,11 +528,24 @@ function handlePeerData(data) {
   }
 }
 
-function endGame(text) {
+function endGame(text, outcome = null) {
   if (gameRecorded) return;
   gameRecorded = true;
   if (clock) clock.stop();
   statusEl.textContent = text;
+
+  let ratingInfo = null;
+  if (mode === "online" && outcome && typeof opponentRating === "number") {
+    const profile = getProfile();
+    const before = profile.rating;
+    const score = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
+    const expected = 1 / (1 + Math.pow(10, (opponentRating - before) / 400));
+    const after = Math.round(before + ELO_K * (score - expected));
+    saveProfile({ ...profile, rating: after, games: profile.games + 1 });
+    ratingInfo = { before, after };
+    statusEl.textContent += ` (Rating ${before} → ${after}, ${after - before >= 0 ? "+" : ""}${after - before})`;
+  }
+
   addHistoryEntry({
     mode,
     result: text,
@@ -482,6 +553,7 @@ function endGame(text) {
     timeControl: timeControlKey,
     playedAt: Date.now(),
     plyCount: game.history().length,
+    rating: ratingInfo,
   });
   renderHistoryList();
   if (mode === "local") clearInProgressLocalGame();
@@ -491,10 +563,20 @@ function endGame(text) {
   }
 }
 
+function currentOutcomeForMe() {
+  if (mode !== "online") return null;
+  if (game.isCheckmate()) {
+    const loser = game.turn(); // side to move is checkmated — that side loses
+    return loser === myColor ? "loss" : "win";
+  }
+  if (game.isStalemate() || game.isDraw()) return "draw";
+  return null;
+}
+
 function finalizeIfOver() {
   if (!mode || viewState !== "game") return;
   if (game.isGameOver() && !gameRecorded) {
-    endGame(statusEl.textContent);
+    endGame(statusEl.textContent, currentOutcomeForMe());
   }
 }
 
@@ -558,7 +640,7 @@ el("btn-rematch").addEventListener("click", () => {
 el("btn-resign").addEventListener("click", () => {
   if (mode !== "online" || game.isGameOver()) return;
   room.send({ type: "resign" });
-  endGame("You resigned.");
+  endGame("You resigned.", "loss");
 });
 
 // ---------- Chat ----------
@@ -579,7 +661,7 @@ el("chat-form").addEventListener("submit", (e) => {
   const text = input.value.trim();
   if (!text || mode !== "online" || !room) return;
   room.send({ type: "chat", text });
-  appendChat("You", text);
+  appendChat(getProfile().name || "You", text);
   input.value = "";
 });
 
@@ -596,6 +678,42 @@ document.querySelectorAll("#time-control .chip").forEach((c) => {
   c.addEventListener("click", () => setActiveChip(c.dataset.tc));
 });
 setActiveChip("untimed");
+
+function renderProfile() {
+  const profile = getProfile();
+  el("profile-name").value = profile.name || "";
+  el("rating-value").textContent = profile.rating;
+  el("rating-record").textContent =
+    profile.games > 0 ? `${profile.games} rated game${profile.games === 1 ? "" : "s"} played` : "No rated games yet.";
+}
+
+el("profile-name").addEventListener("change", () => {
+  const profile = getProfile();
+  profile.name = el("profile-name").value.trim().slice(0, 24);
+  saveProfile(profile);
+});
+
+function showJoinError(msg) {
+  el("join-error").textContent = msg;
+  el("join-error").classList.remove("hidden");
+}
+function hideJoinError() {
+  el("join-error").classList.add("hidden");
+}
+
+function joinByCode() {
+  const val = el("join-code").value.trim();
+  if (!val) {
+    showJoinError("Enter a room code first.");
+    return;
+  }
+  hideJoinError();
+  startOnlineAsGuest(val);
+}
+el("btn-join-code").addEventListener("click", joinByCode);
+el("join-code").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinByCode();
+});
 
 function renderResumeBanner() {
   const saved = loadInProgressLocalGame();
@@ -627,7 +745,8 @@ function renderHistoryList() {
     const metaSpan = document.createElement("span");
     metaSpan.className = "h-meta";
     const modeLabel = entry.mode === "online" ? "Online" : "Local";
-    metaSpan.textContent = `${modeLabel} · ${formatDate(entry.playedAt)} · ${entry.plyCount} ply`;
+    const ratingText = entry.rating ? ` · ${entry.rating.before}→${entry.rating.after}` : "";
+    metaSpan.textContent = `${modeLabel} · ${formatDate(entry.playedAt)} · ${entry.plyCount} ply${ratingText}`;
     btn.appendChild(resultSpan);
     btn.appendChild(metaSpan);
     btn.addEventListener("click", () => openReplay(entry));
@@ -687,6 +806,7 @@ function goHome() {
   showScreen("home");
   renderResumeBanner();
   renderHistoryList();
+  renderProfile();
 }
 
 el("btn-home").addEventListener("click", goHome);
@@ -697,27 +817,77 @@ el("btn-cancel-room").addEventListener("click", () => {
   showScreen("home");
   renderResumeBanner();
   renderHistoryList();
+  renderProfile();
 });
 
 el("btn-local").addEventListener("click", startLocal);
 el("btn-create").addEventListener("click", startOnlineAsHost);
 
-el("btn-copy").addEventListener("click", async () => {
-  const input = el("room-link");
-  input.select();
+async function copyFromInput(inputEl, btnEl) {
+  inputEl.select();
   try {
-    await navigator.clipboard.writeText(input.value);
-    el("btn-copy").textContent = "Copied";
-    setTimeout(() => (el("btn-copy").textContent = "Copy"), 1500);
+    await navigator.clipboard.writeText(inputEl.value);
+    btnEl.textContent = "Copied";
+    setTimeout(() => (btnEl.textContent = "Copy"), 1500);
   } catch {
     document.execCommand("copy");
   }
-});
+}
+el("btn-copy").addEventListener("click", () => copyFromInput(el("room-link"), el("btn-copy")));
+el("btn-copy-code").addEventListener("click", () => copyFromInput(el("room-code"), el("btn-copy-code")));
 
 el("btn-flip").addEventListener("click", () => {
   flipped = !flipped;
   render();
 });
+
+// ---------- Install as an app ----------
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+
+function isIos() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+function isStandalone() {
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+
+let deferredInstallPrompt = null;
+
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if (!localStorage.getItem("oakwood.installDismissed")) {
+    el("install-banner").classList.remove("hidden");
+  }
+});
+
+window.addEventListener("appinstalled", () => {
+  el("install-banner").classList.add("hidden");
+});
+
+el("btn-install").addEventListener("click", async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  el("install-banner").classList.add("hidden");
+});
+
+el("btn-install-dismiss").addEventListener("click", () => {
+  el("install-banner").classList.add("hidden");
+  localStorage.setItem("oakwood.installDismissed", "1");
+});
+
+if (isIos() && !isStandalone() && !localStorage.getItem("oakwood.installDismissed")) {
+  el("install-text").textContent = 'Install Oakwood Chess: tap the Share icon, then "Add to Home Screen".';
+  el("btn-install").classList.add("hidden");
+  el("install-banner").classList.remove("hidden");
+}
 
 // ---------- Boot ----------
 
@@ -729,5 +899,6 @@ if (joinId) {
   showScreen("home");
   renderResumeBanner();
   renderHistoryList();
+  renderProfile();
 }
 render();
