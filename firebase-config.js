@@ -16,4 +16,4 @@ export const firebaseConfig = {
   appId: "1:1066438635780:web:0e82d1ad91f396b9582051",
 };
 
-export const firebaseEnabled = false; // flip to true once the config above is filled in
+export const firebaseEnabled = true; // flip to true once the config above is filled in
