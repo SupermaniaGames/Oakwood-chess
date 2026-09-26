@@ -10,6 +10,17 @@ import {
   getProfile,
   saveProfile,
 } from "./storage.js";
+import {
+  isConfigured,
+  pushProfile,
+  fetchLeaderboard,
+  onAuthChange,
+  getCurrentUser,
+  signInWithGoogle,
+  signUpWithEmail,
+  signInWithEmail,
+  signOutUser,
+} from "./leaderboard.js";
 
 const PEER_PREFIX = "oakwood-chess-";
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — easy to read aloud
@@ -32,10 +43,17 @@ function describeConnError(err) {
   return "Connection problem: " + (type || err?.message || "unknown error");
 }
 
-const PIECES = {
-  w: { p: "♙", n: "♘", b: "♗", r: "♖", q: "♕", k: "♔" },
-  b: { p: "♟", n: "♞", b: "♝", r: "♜", q: "♛", k: "♚" },
-};
+function pieceElement(color, type) {
+  const svgns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgns, "svg");
+  svg.setAttribute("viewBox", "0 0 40 40");
+  svg.setAttribute("class", "piece-svg");
+  const use = document.createElementNS(svgns, "use");
+  use.setAttributeNS("http://www.w3.org/1999/xlink", "href", `#${color}${type}`);
+  use.setAttribute("href", `#${color}${type}`);
+  svg.appendChild(use);
+  return svg;
+}
 
 const el = (id) => document.getElementById(id);
 const boardEl = el("board");
@@ -108,10 +126,7 @@ function renderBoard() {
       sq.dataset.square = square;
 
       if (cell) {
-        const span = document.createElement("span");
-        span.className = "piece " + (cell.color === "w" ? "white" : "black");
-        span.textContent = PIECES[cell.color][cell.type];
-        sq.appendChild(span);
+        sq.appendChild(pieceElement(cell.color, cell.type));
       }
 
       if (viewState === "game") {
@@ -541,7 +556,9 @@ function endGame(text, outcome = null) {
     const score = outcome === "win" ? 1 : outcome === "draw" ? 0.5 : 0;
     const expected = 1 / (1 + Math.pow(10, (opponentRating - before) / 400));
     const after = Math.round(before + ELO_K * (score - expected));
-    saveProfile({ ...profile, rating: after, games: profile.games + 1 });
+    const updatedProfile = { ...profile, rating: after, games: profile.games + 1 };
+    saveProfile(updatedProfile);
+    pushProfile(updatedProfile);
     ratingInfo = { before, after };
     statusEl.textContent += ` (Rating ${before} → ${after}, ${after - before >= 0 ? "+" : ""}${after - before})`;
   }
@@ -679,12 +696,147 @@ document.querySelectorAll("#time-control .chip").forEach((c) => {
 });
 setActiveChip("untimed");
 
+function renderAccountCard() {
+  if (!isConfigured()) {
+    el("account-status").textContent = "Add your Firebase config to enable sign-in — see README.";
+    el("account-status").classList.remove("hidden");
+    el("account-signed-out").classList.add("hidden");
+    el("account-signed-in").classList.add("hidden");
+    return;
+  }
+  el("account-status").classList.add("hidden");
+  const user = getCurrentUser();
+  if (user && !user.isAnonymous) {
+    el("account-signed-out").classList.add("hidden");
+    el("account-signed-in").classList.remove("hidden");
+    el("account-label").textContent = `Signed in as ${user.displayName || user.email || "your account"} — your rating follows you across devices.`;
+  } else {
+    el("account-signed-in").classList.add("hidden");
+    el("account-signed-out").classList.remove("hidden");
+  }
+}
+
+function showAuthError(msg) {
+  el("auth-error").textContent = msg;
+  el("auth-error").classList.remove("hidden");
+}
+function hideAuthError() {
+  el("auth-error").classList.add("hidden");
+}
+
+function afterSignIn() {
+  el("auth-email").value = "";
+  el("auth-password").value = "";
+  const user = getCurrentUser();
+  const profile = getProfile();
+  if (!profile.name && user?.displayName) {
+    profile.name = user.displayName.slice(0, 24);
+    saveProfile(profile);
+  }
+  renderAccountCard();
+  renderProfile();
+  renderLeaderboard();
+  pushProfile(getProfile());
+}
+
+el("btn-google-signin").addEventListener("click", async () => {
+  hideAuthError();
+  const res = await signInWithGoogle();
+  if (!res.ok) {
+    showAuthError(res.error);
+    return;
+  }
+  afterSignIn();
+});
+
+el("btn-email-signin").addEventListener("click", async () => {
+  hideAuthError();
+  const email = el("auth-email").value.trim();
+  const password = el("auth-password").value;
+  if (!email || !password) {
+    showAuthError("Enter your email and password.");
+    return;
+  }
+  const res = await signInWithEmail(email, password);
+  if (!res.ok) {
+    showAuthError(res.error);
+    return;
+  }
+  afterSignIn();
+});
+
+el("btn-email-signup").addEventListener("click", async () => {
+  hideAuthError();
+  const email = el("auth-email").value.trim();
+  const password = el("auth-password").value;
+  if (!email || !password) {
+    showAuthError("Enter an email and password.");
+    return;
+  }
+  const res = await signUpWithEmail(email, password);
+  if (!res.ok) {
+    showAuthError(res.error);
+    return;
+  }
+  afterSignIn();
+});
+
+el("btn-signout").addEventListener("click", async () => {
+  await signOutUser();
+  renderAccountCard();
+  renderProfile();
+  renderLeaderboard();
+});
+
 function renderProfile() {
   const profile = getProfile();
   el("profile-name").value = profile.name || "";
   el("rating-value").textContent = profile.rating;
   el("rating-record").textContent =
     profile.games > 0 ? `${profile.games} rated game${profile.games === 1 ? "" : "s"} played` : "No rated games yet.";
+}
+
+async function renderLeaderboard() {
+  const note = el("leaderboard-note");
+  const list = el("leaderboard-list");
+  list.innerHTML = "";
+
+  if (!isConfigured()) {
+    note.textContent = "Add your Firebase config to turn this into a shared leaderboard across devices — see README.";
+    note.classList.remove("hidden");
+    return;
+  }
+
+  note.textContent = "Loading…";
+  note.classList.remove("hidden");
+  const rows = await fetchLeaderboard(20);
+
+  if (rows == null) {
+    note.textContent = "Couldn't reach the leaderboard right now.";
+    return;
+  }
+  if (rows.length === 0) {
+    note.textContent = "No rated games yet — be the first!";
+    return;
+  }
+
+  note.classList.add("hidden");
+  rows.forEach((r, i) => {
+    const li = document.createElement("li");
+    const row = document.createElement("div");
+    row.className = "history-row";
+    row.style.cursor = "default";
+    const name = document.createElement("span");
+    name.className = "h-result";
+    name.textContent = `${i + 1}. ${r.name || "Anonymous"}`;
+    const meta = document.createElement("span");
+    meta.className = "h-meta";
+    meta.textContent = `${r.rating} rating · ${r.games || 0} games`;
+    row.appendChild(name);
+    row.appendChild(meta);
+    li.appendChild(row);
+    list.appendChild(li);
+  });
 }
 
 el("profile-name").addEventListener("change", () => {
@@ -807,6 +959,8 @@ function goHome() {
   renderResumeBanner();
   renderHistoryList();
   renderProfile();
+  renderLeaderboard();
+  renderAccountCard();
 }
 
 el("btn-home").addEventListener("click", goHome);
@@ -818,6 +972,8 @@ el("btn-cancel-room").addEventListener("click", () => {
   renderResumeBanner();
   renderHistoryList();
   renderProfile();
+  renderLeaderboard();
+  renderAccountCard();
 });
 
 el("btn-local").addEventListener("click", startLocal);
@@ -841,11 +997,38 @@ el("btn-flip").addEventListener("click", () => {
   render();
 });
 
+// ---------- Recovering from backgrounding the tab ----------
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || mode !== "online" || !room) return;
+  room.reconnectIfNeeded();
+  if (viewState === "room" && !el("conn-state").classList.contains("error")) {
+    el("conn-state").textContent = "Reconnecting…";
+  }
+});
+
 // ---------- Install as an app ----------
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("sw.js").catch(() => {});
+  window.addEventListener("load", async () => {
+    // updateViaCache: "none" stops the browser from serving a stale,
+    // HTTP-cached copy of sw.js itself when checking for updates.
+    const reg = await navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).catch(() => null);
+    if (!reg) return;
+    // Check for a newer version whenever the app is brought back to the
+    // foreground, rather than waiting on the browser's own schedule.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reg.update().catch(() => {});
+    });
+  });
+
+  // Once a new service worker activates, reload once so this tab is
+  // actually running the new files instead of stale ones still in memory.
+  let reloadedForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadedForUpdate) return;
+    reloadedForUpdate = true;
+    window.location.reload();
   });
 }
 
@@ -900,5 +1083,17 @@ if (joinId) {
   renderResumeBanner();
   renderHistoryList();
   renderProfile();
+  renderLeaderboard();
+  renderAccountCard();
 }
 render();
+
+// Keep the home screen in sync if auth state changes asynchronously
+// (e.g. a popup sign-in completing) without another explicit re-render call.
+onAuthChange(() => {
+  if (viewState === "home") {
+    renderAccountCard();
+    renderProfile();
+    renderLeaderboard();
+  }
+});

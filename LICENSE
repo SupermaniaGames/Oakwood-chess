@@ -27,3 +27,12 @@ https://github.com/jhlywa/chess.js).
 
 vendor/peerjs.min.js is a bundled copy of the PeerJS library (MIT,
 https://github.com/peers/peerjs).
+
+The chess piece artwork inlined in index.html is by Wikipedia users
+Cburnett and Rfc1394
+(https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard),
+licensed under Creative Commons Attribution-ShareAlike 3.0 Unported
+(CC BY-SA 3.0, https://creativecommons.org/licenses/by-sa/3.0/), vendored
+via the cm-chessboard project (MIT, https://github.com/shaack/cm-chessboard).
+If you modify or redistribute this specific artwork, the CC BY-SA 3.0
+share-alike terms apply to it (the rest of this project's code remains MIT).

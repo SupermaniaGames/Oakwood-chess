@@ -56,6 +56,43 @@ anywhere with HTTPS — installability needs a secure origin):
   (or cross-device history) needs a small database, which is the next
   section.
 
+## Look & feel
+
+- Pieces are now proper vector artwork (the well-known "Cburnett" Staunton
+  set used by most chess sites) instead of text glyphs, on the classic
+  green-and-cream board. See the attribution note in `LICENSE` — this
+  specific artwork is CC BY-SA 3.0, everything else in the project is MIT.
+- The home screen shows the app icon (`icons/icon-512.png`) instead of a
+  text title — once you drop in your own logo (see "Using your own logo /
+  icon" below), it'll show there automatically.
+
+## If you left the app to share the code and it broke
+
+Backgrounding the browser tab (switching to WhatsApp/SMS to send the code,
+or the OS suspending the tab) commonly drops the signaling connection to
+the matchmaking server — that's the "network problem" some people hit right
+after sharing a code. Two things now handle this:
+
+- The connection automatically tries to reconnect on its own once it's
+  able to.
+- Coming back to the app (switching back to the tab) also triggers a
+  reconnect attempt immediately, rather than waiting.
+
+One thing this can't fix: some messaging apps (Instagram, Facebook, etc.)
+open shared links in their own in-app browser, which occasionally blocks
+the WebRTC connection outright. If a link opened that way doesn't connect,
+try opening it in the actual browser (Chrome/Safari) instead.
+
+## Getting updates to an already-installed app
+
+If you'd installed this before and new deploys weren't showing up: that was
+a real bug in the service worker (it was serving the cached version first
+instead of checking the network). It's fixed now — an installed copy checks
+for updates whenever it's brought to the foreground, and reloads itself
+once a new version is ready. If you have an older install that's stuck, a
+manual pull-to-refresh (or uninstall/reinstall) once will get it onto the
+fixed version.
+
 ## Saving & history
 
 - **Resume:** if you leave a local game partway through (the "Home" button),
@@ -98,25 +135,60 @@ or, with Node installed:
 npx serve .
 ```
 
-## A shared database (for a real leaderboard)
+## A shared database (for a real leaderboard) — set up now
 
-Everything above is stored per-device in `localStorage` — there's no
-account, and nothing is sent anywhere. That's simple and private, but it
-means your rating on your phone and your rating on your laptop are two
-different numbers, and you can't see a leaderboard with your friends.
+This is wired up and ready — you just need a free Firebase project and to
+paste six values into one file. No credit card required.
 
-To do that properly needs a small hosted database. Since this project is
-static (no server of its own), the practical options are "backend-as-a-
-service" platforms that a static site can talk to directly:
+1. Go to [console.firebase.google.com](https://console.firebase.google.com),
+   sign in, and click **Add project** (any name is fine; you can skip
+   Google Analytics).
+2. In the left sidebar: **Build → Authentication → Get started**, then
+   enable these sign-in providers (under "Sign-in method"):
+   - **Anonymous** — lets each device play/sync without an account.
+   - **Google** — for "Sign in with Google."
+   - **Email/Password** — for the email + password option.
+   For Google, you may need to set a "public-facing name" and support email
+   the first time — any values work, it's just for the consent screen.
+3. In the left sidebar: **Build → Firestore Database → Create database**.
+   Choose **production mode**, pick any region, and create it.
+4. Once created, go to the **Rules** tab of Firestore and replace the
+   contents with:
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /players/{uid} {
+         allow read: if true;
+         allow write: if request.auth != null && request.auth.uid == uid;
+       }
+     }
+   }
+   ```
+   This makes the leaderboard publicly readable, but each player can only
+   ever write their own rating — publish that with the **Publish** button.
+5. Back in **Project settings** (gear icon, top left) → **General** → scroll
+   to "Your apps" → click the **</>** (web) icon to register a web app
+   (nickname doesn't matter, skip Firebase Hosting). It'll show you a
+   `firebaseConfig` object.
+6. Open `firebase-config.js` in this project, paste those six values in,
+   and change `firebaseEnabled` to `true`.
+7. Still in **Authentication → Settings → Authorized domains**, click
+   **Add domain** and add your GitHub Pages domain (e.g.
+   `your-username.github.io`). Without this, Google/email sign-in will fail
+   with an "unauthorized domain" error once deployed (it works on
+   `localhost` by default, which is why it can seem fine while testing
+   locally and then break after deploying).
+8. Redeploy (push to GitHub, or just refresh if testing locally). The home
+   screen's Account card will show sign-in options, and the Leaderboard
+   card will start showing real data.
 
-- **Firebase (Firestore)** — free tier, easiest to wire into a static site,
-  good realtime support (handy for a "friends currently online" list later).
-- **Supabase** — free tier, Postgres-based, similar effort.
-
-Either needs you to create a free project (no credit card) and paste a
-handful of config values into this app. I can wire up the actual code —
-schema, sync logic, a global leaderboard screen — once you tell me which
-one you'd like, or just say "pick one" and I'll go with Firebase.
+**Worth knowing:** everyone starts as an anonymous player (so casual local
+play still syncs a rating). Signing in with Google or email *upgrades* that
+same session to a real account rather than starting a new one, so your
+existing rating carries over. If someone signs into an email/Google account
+that already exists (from another device), that pre-existing account's own
+rating is what loads — which is the correct behavior, just worth knowing.
 
 ## Deploy to GitHub Pages
 
@@ -153,6 +225,8 @@ main.js           Screens, board rendering, move handling, game state
 multiplayer.js    Thin wrapper around PeerJS for the online room
 clock.js          Per-player countdown clock
 storage.js        localStorage helpers (resume, history, profile/rating)
+leaderboard.js    Optional shared leaderboard (Firebase Firestore)
+firebase-config.js  Your Firebase project config (edit this — see above)
 manifest.json     PWA manifest (name, icons, colors)
 sw.js             Service worker — offline app-shell caching
 icons/            App icons + favicon (placeholder — see below)

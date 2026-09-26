@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v1";
+const CACHE_NAME = "oakwood-chess-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -7,6 +7,8 @@ const APP_SHELL = [
   "./clock.js",
   "./storage.js",
   "./multiplayer.js",
+  "./leaderboard.js",
+  "./firebase-config.js",
   "./manifest.json",
   "./vendor/chess.js",
   "./vendor/peerjs.min.js",
@@ -33,22 +35,23 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const req = event.request;
-  // Only handle our own static files — let PeerJS signaling and anything
-  // cross-origin go straight to the network untouched.
+  // Only handle our own static files — let PeerJS signaling, Firebase, and
+  // anything else cross-origin go straight to the network untouched.
   if (req.method !== "GET" || new URL(req.url).origin !== self.location.origin) return;
 
+  // Network-first: an installed app should always see a fresh deploy when
+  // it has a connection. The cache exists purely as an offline fallback —
+  // serving it first would mean updates never reach an already-installed
+  // app until the browser happened to re-check on its own schedule.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      const network = fetch(req)
-        .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || network;
-    })
+    fetch(req)
+      .then((res) => {
+        if (res && res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(req))
   );
 });

@@ -40,6 +40,7 @@ export class Room {
     this.peer.on("open", (openedId) => this.onOpen && this.onOpen(openedId));
     this.peer.on("connection", (conn) => this._bind(conn));
     this.peer.on("error", (err) => this.onError && this.onError(err));
+    this._watchDisconnect();
   }
 
   join(hostId) {
@@ -50,6 +51,25 @@ export class Room {
       this._bind(conn);
     });
     this.peer.on("error", (err) => this.onError && this.onError(err));
+    this._watchDisconnect();
+  }
+
+  // Backgrounding the browser tab (e.g. switching apps to share the room
+  // code, or the OS suspending the tab) commonly drops the signaling
+  // connection to PeerJS's broker — the "network problem" people hit when
+  // they step out mid-invite. It reconnects on its own once possible.
+  _watchDisconnect() {
+    this.peer.on("disconnected", () => {
+      if (!this.peer.destroyed) this.peer.reconnect();
+    });
+  }
+
+  // Call when the page becomes visible again, as a second chance in case
+  // the automatic reconnect above didn't already catch it.
+  reconnectIfNeeded() {
+    if (this.peer && this.peer.disconnected && !this.peer.destroyed) {
+      this.peer.reconnect();
+    }
   }
 
   _bind(conn) {
