@@ -1,13 +1,10 @@
-// Paste your Firebase project's config below, then set firebaseEnabled to
-// true. Find these values in the Firebase console:
-// Project settings (gear icon) → General → Your apps → SDK setup and
-// configuration → Config.
-//
-// Until you do that, the app runs entirely local-only (no error, no
-// network calls) — this file being left as-is is a supported state, not
-// a broken one.
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
-export const firebaseConfig = {
+// Your web app's Firebase configuration
+const firebaseConfig = {
   apiKey: "AIzaSyAhH_GDUzL3o0kf8arJG4AwEVXIrHI8wn8",
   authDomain: "oakwood-chess.firebaseapp.com",
   projectId: "oakwood-chess",
@@ -16,4 +13,5 @@ export const firebaseConfig = {
   appId: "1:1066438635780:web:0e82d1ad91f396b9582051"
 };
 
-export const firebaseEnabled = false; // flip to true once the config above is filled in
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
