@@ -198,17 +198,54 @@ export async function signOutUser() {
   // fresh anonymous session automatically, so gameplay keeps working.
 }
 
+// Claims a username with case-insensitive uniqueness enforced by Firestore
+// rules + a transaction (see the "usernames" collection in the README's
+// security rules). Releases any previous username this account held.
+export async function claimUsername(name) {
+  await ready();
+  if (!state) return { ok: false, error: "Firebase isn't configured yet." };
+  const trimmed = (name || "").trim();
+  if (!trimmed) return { ok: false, error: "Enter a username first." };
+  if (trimmed.length > 24) return { ok: false, error: "Keep it under 24 characters." };
+  const key = trimmed.toLowerCase();
+  const uid = state.auth.currentUser.uid;
+  const { doc, runTransaction } = state.store;
+  try {
+    await runTransaction(state.db, async (tx) => {
+      const claimRef = doc(state.db, "usernames", key);
+      const claimSnap = await tx.get(claimRef);
+      if (claimSnap.exists() && claimSnap.data().uid !== uid) {
+        throw new Error("taken");
+      }
+      const playerRef = doc(state.db, "players", uid);
+      const playerSnap = await tx.get(playerRef);
+      const prevName = playerSnap.exists() ? playerSnap.data().name : null;
+      if (prevName && prevName.toLowerCase() !== key) {
+        tx.delete(doc(state.db, "usernames", prevName.toLowerCase()));
+      }
+      tx.set(claimRef, { uid });
+      tx.set(playerRef, { name: trimmed, uid }, { merge: true });
+    });
+    return { ok: true, name: trimmed };
+  } catch (err) {
+    if (err?.message === "taken") return { ok: false, error: "That username is already taken." };
+    return { ok: false, error: err?.message || "Couldn't save that username right now." };
+  }
+}
+
 // Upserts this account's player doc. Fire-and-forget is fine — it never
 // blocks gameplay, and failures are logged, not thrown.
 export async function pushProfile(profile) {
   await ready();
   if (!state) return false;
+  const name = (profile.name || "").trim();
+  if (!name) return false; // don't clutter the leaderboard with nameless entries
   try {
     const { doc, setDoc, serverTimestamp } = state.store;
     await setDoc(
       doc(state.db, "players", state.auth.currentUser.uid),
       {
-        name: (profile.name || "Anonymous").slice(0, 24),
+        name: name.slice(0, 24),
         rating: profile.rating,
         games: profile.games,
         updatedAt: serverTimestamp(),

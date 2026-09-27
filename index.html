@@ -226,9 +226,32 @@
         <div id="screen-home" class="screen">
 
           <div class="card">
+            <h2>Play vs Computer</h2>
+            <p class="muted">Practice offline — no opponent required.</p>
+            <div id="bot-difficulty" class="chip-row" role="radiogroup" aria-label="Bot difficulty">
+              <button class="chip" data-diff="easy">Easy</button>
+              <button class="chip" data-diff="medium">Medium</button>
+              <button class="chip" data-diff="hard">Hard</button>
+            </div>
+            <div id="bot-color" class="chip-row" role="radiogroup" aria-label="Play as">
+              <button class="chip" data-color="w">Play as White</button>
+              <button class="chip" data-color="b">Play as Black</button>
+              <button class="chip" data-color="random">Random</button>
+            </div>
+            <button id="btn-play-bot" class="btn btn-primary">Play</button>
+          </div>
+
+          <div class="card">
+            <h2>New to chess?</h2>
+            <p class="muted">Learn how each piece moves, plus the special moves and how to win — good for kids or a refresher for anyone.</p>
+            <button id="btn-goto-learn" class="btn btn-ghost">Learn to play</button>
+          </div>
+
+          <div class="card">
             <h2>Your rating</h2>
-            <p class="muted">A simple Elo rating from your online games, kept on this device. Set a name so your friend recognizes you in chat.</p>
-            <input id="profile-name" type="text" maxlength="24" placeholder="Your name" class="text-input" />
+            <p class="muted">A simple Elo rating from your online games. Pick a username to show on the leaderboard — with Firebase connected, it's yours alone, no one else can take it.</p>
+            <input id="profile-name" type="text" maxlength="24" placeholder="Username" class="text-input" autocapitalize="none" />
+            <p id="profile-name-error" class="conn-state error hidden"></p>
             <div class="rating-row">
               <span class="rating-badge"><span id="rating-value">1200</span><small>rating</small></span>
               <span class="muted" id="rating-record" style="margin:0;">No rated games yet.</span>
@@ -383,6 +406,60 @@
           </div>
         </div>
 
+        <!-- LEARN -->
+        <div id="screen-learn" class="screen hidden">
+          <div class="card">
+            <h2>How to play chess</h2>
+            <p class="muted">Chess is a game for two players. Each side starts with 16 pieces, and the goal is to trap the other player's king so it can't escape — that's called <strong>checkmate</strong>.</p>
+            <button id="btn-learn-back" class="btn btn-ghost btn-small">&larr; Back to home</button>
+          </div>
+
+          <div class="card">
+            <h3 class="learn-piece-title"><svg class="piece-svg-small" viewBox="0 0 40 40"><use href="#wp"></use></svg>Pawn</h3>
+            <p class="muted">Moves straight ahead one square (two squares on its very first move), but it can only capture diagonally, one square ahead. It's the only piece that captures differently than it moves.</p>
+          </div>
+
+          <div class="card">
+            <h3 class="learn-piece-title"><svg class="piece-svg-small" viewBox="0 0 40 40"><use href="#wn"></use></svg>Knight</h3>
+            <p class="muted">Moves in an "L" shape: two squares in one direction, then one square sideways. It's the only piece that can jump right over other pieces.</p>
+          </div>
+
+          <div class="card">
+            <h3 class="learn-piece-title"><svg class="piece-svg-small" viewBox="0 0 40 40"><use href="#wb"></use></svg>Bishop</h3>
+            <p class="muted">Slides diagonally, as far as it wants. Each bishop stays on the same color square for the whole game — one starts on light squares, one on dark.</p>
+          </div>
+
+          <div class="card">
+            <h3 class="learn-piece-title"><svg class="piece-svg-small" viewBox="0 0 40 40"><use href="#wr"></use></svg>Rook</h3>
+            <p class="muted">Slides in a straight line — up, down, left, or right — as far as it wants. Rooks are also part of a special move called castling (below).</p>
+          </div>
+
+          <div class="card">
+            <h3 class="learn-piece-title"><svg class="piece-svg-small" viewBox="0 0 40 40"><use href="#wq"></use></svg>Queen</h3>
+            <p class="muted">The most powerful piece — combines the rook and bishop, sliding any direction (straight or diagonal) as far as it wants.</p>
+          </div>
+
+          <div class="card">
+            <h3 class="learn-piece-title"><svg class="piece-svg-small" viewBox="0 0 40 40"><use href="#wk"></use></svg>King</h3>
+            <p class="muted">Moves only one square in any direction. It's the piece you have to protect — if it's trapped, the game is over.</p>
+          </div>
+
+          <div class="card">
+            <h3>Special moves</h3>
+            <p class="muted">
+              <strong>Castling:</strong> if the king and one of its rooks haven't moved yet, and nothing's between them, they can move together in one turn — the king hops two squares toward the rook, tucking itself somewhere safer.<br><br>
+              <strong>En passant:</strong> a special pawn capture. If an opponent's pawn moves two squares and lands right beside yours, you can capture it as if it had only moved one square — but only immediately, on your very next move.<br><br>
+              <strong>Promotion:</strong> if a pawn makes it all the way to the far end of the board, it transforms into any other piece you choose — almost everyone picks a queen.
+            </p>
+          </div>
+
+          <div class="card">
+            <h3>Winning the game</h3>
+            <p class="muted">You win by putting the opponent's king in <strong>checkmate</strong>: it's under attack, and there's no move that gets it out of trouble. If nobody can make progress, the game can end in a <strong>draw</strong> instead — nobody wins.</p>
+            <button id="btn-learn-play" class="btn btn-primary" style="margin-top:6px;">Try it against the computer</button>
+          </div>
+        </div>
+
         <div id="promo-modal" class="modal hidden">
           <div class="modal-card">
             <p>Promote your pawn to:</p>
@@ -399,7 +476,22 @@
 
     </main>
 
-    <footer class="foot">Runs entirely in the browser &mdash; games are saved only on this device.</footer>
+    <nav id="bottom-nav" class="bottom-nav">
+      <button class="nav-btn active" data-nav="home">
+        <span class="nav-icon">🏠</span><span>Home</span>
+      </button>
+      <button class="nav-btn" data-nav="learn">
+        <span class="nav-icon">🎓</span><span>Learn</span>
+      </button>
+    </nav>
+
+    <footer class="foot">
+      <div class="credits">
+        <img src="icons/credits/boring-games.png" alt="Boring Games" class="credit-logo" />
+        <span>Produced by Boring Games · Made by Supermania Games</span>
+      </div>
+      <p>Runs entirely in the browser &mdash; games are saved only on this device.</p>
+    </footer>
   </div>
 
   <script src="vendor/peerjs.min.js"></script>

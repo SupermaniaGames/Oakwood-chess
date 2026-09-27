@@ -162,11 +162,25 @@ paste six values into one file. No credit card required.
          allow read: if true;
          allow write: if request.auth != null && request.auth.uid == uid;
        }
+       match /usernames/{name} {
+         allow read: if true;
+         allow create: if request.auth != null
+                        && request.resource.data.uid == request.auth.uid;
+         allow update: if request.auth != null
+                        && resource.data.uid == request.auth.uid
+                        && request.resource.data.uid == request.auth.uid;
+         allow delete: if request.auth != null
+                        && resource.data.uid == request.auth.uid;
+       }
      }
    }
    ```
-   This makes the leaderboard publicly readable, but each player can only
-   ever write their own rating — publish that with the **Publish** button.
+   `players` holds each account's rating; `usernames` is a separate
+   lookup collection that's what actually makes usernames unique — claiming
+   one writes a `usernames/<lowercased-name>` doc, and the rules above only
+   let you create/change/delete an entry that's already yours, so nobody
+   can steal or overwrite someone else's. Publish with the **Publish**
+   button.
 5. Back in **Project settings** (gear icon, top left) → **General** → scroll
    to "Your apps" → click the **</>** (web) icon to register a web app
    (nickname doesn't matter, skip Firebase Hosting). It'll show you a

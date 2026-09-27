@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v3";
+const CACHE_NAME = "oakwood-chess-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -9,6 +9,7 @@ const APP_SHELL = [
   "./multiplayer.js",
   "./leaderboard.js",
   "./firebase-config.js",
+  "./bot.js",
   "./manifest.json",
   "./vendor/chess.js",
   "./vendor/peerjs.min.js",
@@ -16,11 +17,23 @@ const APP_SHELL = [
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
+  "./icons/credits/boring-games.png",
 ];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting())
+    caches
+      .open(CACHE_NAME)
+      .then((cache) =>
+        Promise.all(
+          APP_SHELL.map((url) =>
+            fetch(url, { cache: "reload" })
+              .then((res) => cache.put(url, res))
+              .catch(() => {})
+          )
+        )
+      )
+      .then(() => self.skipWaiting())
   );
 });
 

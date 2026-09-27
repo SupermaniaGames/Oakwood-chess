@@ -20,7 +20,9 @@ import {
   signUpWithEmail,
   signInWithEmail,
   signOutUser,
+  claimUsername,
 } from "./leaderboard.js";
+import { chooseBotMove, DIFFICULTIES } from "./bot.js";
 
 const PEER_PREFIX = "oakwood-chess-";
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — easy to read aloud
@@ -81,15 +83,18 @@ let replayIndex = 0;
 let currentRoomCode = "";
 let opponentName = "Friend";
 let opponentRating = null;
+let botDifficulty = "medium";
+let botColorChoice = "w";
 
 // ---------- Screen management ----------
 
 function showScreen(name) {
   viewState = name;
-  ["home", "room", "game", "replay"].forEach((s) =>
+  ["home", "room", "game", "replay", "learn"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
   el("board-wrap").classList.toggle("hidden", !(name === "game" || name === "replay"));
+  el("bottom-nav").classList.toggle("hidden", name === "game");
 }
 
 // ---------- Rendering ----------
@@ -174,6 +179,8 @@ function renderStatus() {
     statusEl.textContent = "Draw.";
   } else if (game.inCheck()) {
     statusEl.textContent = `${game.turn() === "w" ? "White" : "Black"} is in check.`;
+  } else if (mode === "bot") {
+    statusEl.textContent = game.turn() === myColor ? "Your move" : "Bot is thinking…";
   } else if (mode === "online") {
     statusEl.textContent = game.turn() === myColor ? "Your move" : "Waiting for your friend";
   } else if (mode === "local") {
@@ -196,6 +203,10 @@ function updateSideLabels() {
   if (mode === "local") {
     youLabel.textContent = "White";
     themLabel.textContent = "Black";
+  } else if (mode === "bot") {
+    youLabel.innerHTML = `You &middot; ${myColor === "w" ? "White" : "Black"}`;
+    const diffLabel = DIFFICULTIES[botDifficulty]?.label || "Medium";
+    themLabel.textContent = `Bot (${diffLabel}) · ${myColor === "w" ? "Black" : "White"}`;
   } else {
     youLabel.innerHTML = `You &middot; ${myColor === "w" ? "White" : "Black"}`;
     themLabel.textContent = `${opponentName} · ${myColor === "w" ? "Black" : "White"}`;
@@ -228,7 +239,7 @@ function onClockFlag(color) {
 function onSquareClick(square) {
   if (viewState !== "game" || !mode) return;
   if (game.isGameOver()) return;
-  if (mode === "online" && game.turn() !== myColor) return;
+  if ((mode === "online" || mode === "bot") && game.turn() !== myColor) return;
 
   if (selected) {
     const move = legalTargets.find((m) => m.to === square);
@@ -268,7 +279,29 @@ function applyMove({ from, to, promotion }) {
   if (clock) clock.switchTo(game.turn());
   if (mode === "online") room.send({ type: "move", from, to, promotion });
   if (mode === "local") saveLocalProgress();
+  if (mode === "bot") maybeTriggerBotMove();
   return move;
+}
+
+function maybeTriggerBotMove() {
+  if (mode !== "bot" || viewState !== "game") return;
+  if (game.isGameOver()) return;
+  if (game.turn() === myColor) return;
+  statusEl.textContent = "Bot is thinking…";
+  el("btn-undo").disabled = true;
+  const thinkingDelay = 300 + Math.random() * 300;
+  setTimeout(() => {
+    el("btn-undo").disabled = false;
+    if (mode !== "bot" || game.isGameOver()) return;
+    const botMove = chooseBotMove(game, botDifficulty);
+    if (!botMove) return;
+    const applied = game.move(botMove);
+    if (applied) {
+      lastMove = { from: applied.from, to: applied.to };
+      if (clock) clock.switchTo(game.turn());
+    }
+    render();
+  }, thinkingDelay);
 }
 
 el("promo-modal").addEventListener("click", (e) => {
@@ -633,6 +666,12 @@ el("btn-undo").addEventListener("click", () => {
     applyLocalUndo();
     return;
   }
+  if (mode === "bot") {
+    if (game.history().length < 2) return; // nothing meaningful to retry yet
+    applyLocalUndo(); // pop the bot's reply
+    applyLocalUndo(); // pop your own last move
+    return;
+  }
   if (outgoingRequest) return;
   outgoingRequest = "undo";
   el("btn-undo").disabled = true;
@@ -645,6 +684,10 @@ el("btn-rematch").addEventListener("click", () => {
     startLocal();
     return;
   }
+  if (mode === "bot") {
+    startBotGame(botDifficulty, myColor);
+    return;
+  }
   if (mode === "online") {
     if (outgoingRequest) return;
     outgoingRequest = "rematch";
@@ -655,9 +698,13 @@ el("btn-rematch").addEventListener("click", () => {
 });
 
 el("btn-resign").addEventListener("click", () => {
-  if (mode !== "online" || game.isGameOver()) return;
-  room.send({ type: "resign" });
-  endGame("You resigned.", "loss");
+  if (game.isGameOver()) return;
+  if (mode === "online") {
+    room.send({ type: "resign" });
+    endGame("You resigned.", "loss");
+  } else if (mode === "bot") {
+    endGame("You resigned.");
+  }
 });
 
 // ---------- Chat ----------
@@ -733,6 +780,9 @@ function afterSignIn() {
     profile.name = user.displayName.slice(0, 24);
     saveProfile(profile);
   }
+  if (isConfigured() && profile.name) {
+    claimUsername(profile.name); // best-effort; if taken, they can change it via the field
+  }
   renderAccountCard();
   renderProfile();
   renderLeaderboard();
@@ -794,6 +844,7 @@ function renderProfile() {
   el("rating-value").textContent = profile.rating;
   el("rating-record").textContent =
     profile.games > 0 ? `${profile.games} rated game${profile.games === 1 ? "" : "s"} played` : "No rated games yet.";
+  hideNameError();
 }
 
 async function renderLeaderboard() {
@@ -809,26 +860,42 @@ async function renderLeaderboard() {
 
   note.textContent = "Loading…";
   note.classList.remove("hidden");
-  const rows = await fetchLeaderboard(20);
+  const rows = await fetchLeaderboard(50);
 
   if (rows == null) {
     note.textContent = "Couldn't reach the leaderboard right now.";
     return;
   }
-  if (rows.length === 0) {
+
+  // Defensive cleanup for entries created before usernames were required to
+  // be unique: drop anything unnamed/"Anonymous", and if the same name
+  // appears more than once, keep only its best rating.
+  const byName = new Map();
+  for (const r of rows) {
+    const name = (r.name || "").trim();
+    if (!name || name.toLowerCase() === "anonymous") continue;
+    const key = name.toLowerCase();
+    const existing = byName.get(key);
+    if (!existing || (r.rating || 0) > (existing.rating || 0)) {
+      byName.set(key, { ...r, name });
+    }
+  }
+  const cleaned = [...byName.values()].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, 20);
+
+  if (cleaned.length === 0) {
     note.textContent = "No rated games yet — be the first!";
     return;
   }
 
   note.classList.add("hidden");
-  rows.forEach((r, i) => {
+  cleaned.forEach((r, i) => {
     const li = document.createElement("li");
     const row = document.createElement("div");
     row.className = "history-row";
     row.style.cursor = "default";
     const name = document.createElement("span");
     name.className = "h-result";
-    name.textContent = `${i + 1}. ${r.name || "Anonymous"}`;
+    name.textContent = `${i + 1}. ${r.name}`;
     const meta = document.createElement("span");
     meta.className = "h-meta";
     meta.textContent = `${r.rating} rating · ${r.games || 0} games`;
@@ -839,11 +906,37 @@ async function renderLeaderboard() {
   });
 }
 
-el("profile-name").addEventListener("change", () => {
+el("profile-name").addEventListener("change", async () => {
+  const newName = el("profile-name").value.trim().slice(0, 24);
+  hideNameError();
+  if (!newName) {
+    const profile = getProfile();
+    profile.name = "";
+    saveProfile(profile);
+    return;
+  }
+  if (isConfigured()) {
+    const res = await claimUsername(newName);
+    if (!res.ok) {
+      showNameError(res.error);
+      renderProfile(); // revert the field to the last saved name
+      return;
+    }
+  }
   const profile = getProfile();
-  profile.name = el("profile-name").value.trim().slice(0, 24);
+  profile.name = newName;
   saveProfile(profile);
+  pushProfile(profile);
+  renderLeaderboard();
 });
+
+function showNameError(msg) {
+  el("profile-name-error").textContent = msg;
+  el("profile-name-error").classList.remove("hidden");
+}
+function hideNameError() {
+  el("profile-name-error").classList.add("hidden");
+}
 
 function showJoinError(msg) {
   el("join-error").textContent = msg;
@@ -866,6 +959,74 @@ el("btn-join-code").addEventListener("click", joinByCode);
 el("join-code").addEventListener("keydown", (e) => {
   if (e.key === "Enter") joinByCode();
 });
+
+function setNavActive(name) {
+  document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.nav === name));
+}
+
+document.querySelectorAll(".nav-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (btn.dataset.nav === "home") {
+      goHome();
+    } else if (btn.dataset.nav === "learn") {
+      setNavActive("learn");
+      showScreen("learn");
+    }
+  });
+});
+
+el("btn-goto-learn").addEventListener("click", () => {
+  setNavActive("learn");
+  showScreen("learn");
+});
+
+el("btn-learn-back").addEventListener("click", goHome);
+
+el("btn-learn-play").addEventListener("click", () => {
+  startBotGame("easy", "w");
+});
+
+function setActiveBotDifficulty(key) {
+  botDifficulty = key;
+  document.querySelectorAll("#bot-difficulty .chip").forEach((c) => c.classList.toggle("active", c.dataset.diff === key));
+}
+document.querySelectorAll("#bot-difficulty .chip").forEach((c) => {
+  c.addEventListener("click", () => setActiveBotDifficulty(c.dataset.diff));
+});
+setActiveBotDifficulty("medium");
+
+function setActiveBotColor(key) {
+  botColorChoice = key;
+  document.querySelectorAll("#bot-color .chip").forEach((c) => c.classList.toggle("active", c.dataset.color === key));
+}
+document.querySelectorAll("#bot-color .chip").forEach((c) => {
+  c.addEventListener("click", () => setActiveBotColor(c.dataset.color));
+});
+setActiveBotColor("w");
+
+el("btn-play-bot").addEventListener("click", () => {
+  const color = botColorChoice === "random" ? (Math.random() < 0.5 ? "w" : "b") : botColorChoice;
+  startBotGame(botDifficulty, color);
+});
+
+function startBotGame(difficulty, humanColor) {
+  mode = "bot";
+  myColor = humanColor;
+  botDifficulty = difficulty;
+  game.reset();
+  flipped = humanColor === "b";
+  resetTransientState();
+  clock = new Clock("untimed", onClockTick, onClockFlag);
+  clearClockDisplay();
+  updateSideLabels();
+  el("btn-resign").classList.remove("hidden");
+  el("btn-rematch").classList.remove("hidden");
+  el("btn-rematch").textContent = "New game";
+  el("chat-card").classList.add("hidden");
+  showScreen("game");
+  render();
+  maybeTriggerBotMove(); // in case the bot plays first (human chose Black)
+}
 
 function renderResumeBanner() {
   const saved = loadInProgressLocalGame();
@@ -946,15 +1107,15 @@ el("btn-replay-back").addEventListener("click", goHome);
 
 function goHome() {
   if (mode === "local" && !game.isGameOver()) {
-    if (clock) clock.stop();
     saveLocalProgress();
   }
-  if (mode === "online") {
-    if (room) room.close();
-    if (clock) clock.stop();
+  if (mode === "online" && room) {
+    room.close();
   }
+  if (clock) clock.stop();
   mode = null;
   room = null;
+  setNavActive("home");
   showScreen("home");
   renderResumeBanner();
   renderHistoryList();
