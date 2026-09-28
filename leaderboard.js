@@ -198,6 +198,40 @@ export async function signOutUser() {
   // fresh anonymous session automatically, so gameplay keeps working.
 }
 
+// Reads this account's saved profile from Firestore, if any. Used to make
+// sign-in restore your real username/rating instead of showing whatever
+// (or nothing) happens to be cached locally on this particular device.
+export async function fetchMyProfile() {
+  await ready();
+  if (!state) return null;
+  try {
+    const { doc, getDoc } = state.store;
+    const snap = await getDoc(doc(state.db, "players", state.auth.currentUser.uid));
+    return snap.exists() ? snap.data() : null;
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't load your saved profile.", err);
+    return null;
+  }
+}
+
+// Read-only check, no claiming — lets the UI show "available"/"taken"
+// before someone commits to signing up with a name.
+export async function checkUsernameAvailable(name) {
+  await ready();
+  if (!state) return { ok: false, error: "Firebase isn't configured yet." };
+  const trimmed = (name || "").trim();
+  if (!trimmed) return { ok: false, error: "Enter a username first." };
+  try {
+    const { doc, getDoc } = state.store;
+    const snap = await getDoc(doc(state.db, "usernames", trimmed.toLowerCase()));
+    if (!snap.exists()) return { ok: true, available: true };
+    const takenByMe = state.auth.currentUser && snap.data().uid === state.auth.currentUser.uid;
+    return { ok: true, available: !!takenByMe, mine: !!takenByMe };
+  } catch (err) {
+    return { ok: false, error: err?.message || "Couldn't check that right now." };
+  }
+}
+
 // Claims a username with case-insensitive uniqueness enforced by Firestore
 // rules + a transaction (see the "usernames" collection in the README's
 // security rules). Releases any previous username this account held.
@@ -220,8 +254,19 @@ export async function claimUsername(name) {
       const playerRef = doc(state.db, "players", uid);
       const playerSnap = await tx.get(playerRef);
       const prevName = playerSnap.exists() ? playerSnap.data().name : null;
-      if (prevName && prevName.toLowerCase() !== key) {
-        tx.delete(doc(state.db, "usernames", prevName.toLowerCase()));
+      const prevKey = prevName ? prevName.toLowerCase() : null;
+      // Firestore transactions need every read before any write, so look
+      // up the old claim now rather than blindly deleting it: if it was
+      // never claimed (older data), there's nothing to release, and a
+      // delete on a missing doc would be rejected by the security rules.
+      let prevClaimSnap = null;
+      let prevRef = null;
+      if (prevKey && prevKey !== key) {
+        prevRef = doc(state.db, "usernames", prevKey);
+        prevClaimSnap = await tx.get(prevRef);
+      }
+      if (prevClaimSnap && prevClaimSnap.exists() && prevClaimSnap.data().uid === uid) {
+        tx.delete(prevRef);
       }
       tx.set(claimRef, { uid });
       tx.set(playerRef, { name: trimmed, uid }, { merge: true });
@@ -240,12 +285,17 @@ export async function pushProfile(profile) {
   if (!state) return false;
   const name = (profile.name || "").trim();
   if (!name) return false; // don't clutter the leaderboard with nameless entries
+  // A name should only ever reach the leaderboard through the unique-claim
+  // path — otherwise one typed while Firebase was off (or from older data)
+  // could be pushed unchecked and duplicate someone else's. Claiming your
+  // own existing name is a harmless no-op.
+  const claim = await claimUsername(name);
+  if (!claim.ok) return false;
   try {
     const { doc, setDoc, serverTimestamp } = state.store;
     await setDoc(
       doc(state.db, "players", state.auth.currentUser.uid),
       {
-        name: name.slice(0, 24),
         rating: profile.rating,
         games: profile.games,
         updatedAt: serverTimestamp(),

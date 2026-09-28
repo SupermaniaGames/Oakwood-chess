@@ -191,6 +191,26 @@
     </defs>
   </svg>
 
+  <div class="app-shell">
+    <nav class="side-nav">
+      <div class="side-nav-brand">
+        <img src="icons/icon-512.png" alt="" class="side-nav-logo" />
+        <span>Oakwood</span>
+      </div>
+      <button class="nav-btn side-nav-btn active" data-nav="home">
+        <span class="nav-icon">🏠</span><span>Home</span>
+      </button>
+      <button class="nav-btn side-nav-btn" data-nav="learn">
+        <span class="nav-icon">🎓</span><span>Learn</span>
+      </button>
+      <button class="nav-btn side-nav-btn" data-nav="watch">
+        <span class="nav-icon">📺</span><span>Watch</span>
+      </button>
+      <button class="nav-btn side-nav-btn" data-nav="account">
+        <span class="nav-icon">👤</span><span>Account</span>
+      </button>
+    </nav>
+
   <div class="app">
     <header class="titlebar">
       <img src="icons/icon-512.png" alt="Oakwood Chess" class="app-logo" />
@@ -241,51 +261,6 @@
             <button id="btn-play-bot" class="btn btn-primary">Play</button>
           </div>
 
-          <div class="card">
-            <h2>New to chess?</h2>
-            <p class="muted">Learn how each piece moves, plus the special moves and how to win — good for kids or a refresher for anyone.</p>
-            <button id="btn-goto-learn" class="btn btn-ghost">Learn to play</button>
-          </div>
-
-          <div class="card">
-            <h2>Your rating</h2>
-            <p class="muted">A simple Elo rating from your online games. Pick a username to show on the leaderboard — with Firebase connected, it's yours alone, no one else can take it.</p>
-            <input id="profile-name" type="text" maxlength="24" placeholder="Username" class="text-input" autocapitalize="none" />
-            <p id="profile-name-error" class="conn-state error hidden"></p>
-            <div class="rating-row">
-              <span class="rating-badge"><span id="rating-value">1200</span><small>rating</small></span>
-              <span class="muted" id="rating-record" style="margin:0;">No rated games yet.</span>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Account</h2>
-            <p class="muted" id="account-status">Add your Firebase config to enable sign-in — see README.</p>
-
-            <div id="account-signed-out" class="hidden">
-              <button id="btn-google-signin" class="btn btn-primary">Sign in with Google</button>
-              <div class="divider"><span>or</span></div>
-              <input id="auth-email" type="email" placeholder="Email" class="text-input" autocomplete="email" />
-              <input id="auth-password" type="password" placeholder="Password (6+ characters)" class="text-input" autocomplete="current-password" />
-              <div class="controls">
-                <button id="btn-email-signin" class="btn btn-ghost btn-small">Sign in</button>
-                <button id="btn-email-signup" class="btn btn-ghost btn-small">Create account</button>
-              </div>
-              <p id="auth-error" class="conn-state error hidden"></p>
-            </div>
-
-            <div id="account-signed-in" class="hidden">
-              <p class="muted" id="account-label" style="margin-bottom:10px;"></p>
-              <button id="btn-signout" class="btn btn-ghost btn-small">Sign out</button>
-            </div>
-          </div>
-
-          <div class="card">
-            <h2>Leaderboard</h2>
-            <p class="muted" id="leaderboard-note">Add your Firebase config to turn this into a shared leaderboard across devices — see README.</p>
-            <ol id="leaderboard-list" class="history-list"></ol>
-          </div>
-
           <div id="resume-card" class="card accent-card hidden">
             <h2>Game in progress</h2>
             <p class="muted">You left a local game partway through.</p>
@@ -319,7 +294,7 @@
             <p id="join-error" class="conn-state error hidden"></p>
           </div>
 
-          <div class="card">
+          <div class="card card-wide">
             <h2>History</h2>
             <p class="muted" id="history-empty">No finished games yet.</p>
             <ol id="history-list" class="history-list"></ol>
@@ -374,9 +349,10 @@
             <h3>Moves</h3>
             <ol id="move-list" class="move-list"></ol>
 
-            <div class="controls">
+            <div id="game-controls" class="controls">
               <button id="btn-flip" class="btn btn-ghost btn-small">Flip board</button>
               <button id="btn-undo" class="btn btn-ghost btn-small">Undo</button>
+              <button id="btn-sound" class="btn btn-ghost btn-small" title="Toggle sound">🔊</button>
               <button id="btn-resign" class="btn btn-danger btn-small hidden">Resign</button>
               <button id="btn-rematch" class="btn btn-ghost btn-small hidden">Rematch</button>
               <button id="btn-home" class="btn btn-ghost btn-small">Home</button>
@@ -460,6 +436,73 @@
           </div>
         </div>
 
+        <!-- ACCOUNT -->
+        <div id="screen-account" class="screen hidden">
+          <div class="card">
+            <h2>Your rating</h2>
+            <p class="muted">A simple Elo rating from your online games. Choose a username to appear on the leaderboard — it's yours alone, no one else can take it.</p>
+            <div class="username-row">
+              <input id="profile-name" type="text" maxlength="24" placeholder="Username" class="text-input" autocapitalize="none" style="margin-bottom:0;" />
+              <button id="btn-check-username" class="btn btn-small">Check</button>
+            </div>
+            <p id="username-check-result" class="conn-state hidden"></p>
+            <p id="profile-name-error" class="conn-state error hidden"></p>
+            <div class="rating-row" style="margin-top:14px;">
+              <span class="rating-badge"><span id="rating-value">1200</span><small>rating</small></span>
+              <span class="muted" id="rating-record" style="margin:0;">No rated games yet.</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Sign in</h2>
+            <p class="muted" id="account-status">Add your Firebase config to enable sign-in — see README.</p>
+
+            <div id="account-signed-out" class="hidden">
+              <p class="muted">Sign in to keep this username and rating with you on any device — or skip this and keep playing as a guest; your rating will just stay on this device.</p>
+              <button id="btn-google-signin" class="btn btn-primary">Sign in with Google</button>
+              <div class="divider"><span>or</span></div>
+              <input id="auth-email" type="email" placeholder="Email" class="text-input" autocomplete="email" />
+              <input id="auth-password" type="password" placeholder="Password (6+ characters)" class="text-input" autocomplete="current-password" />
+              <div class="controls">
+                <button id="btn-email-signin" class="btn btn-ghost btn-small">Sign in</button>
+                <button id="btn-email-signup" class="btn btn-ghost btn-small">Create account</button>
+              </div>
+              <p id="auth-error" class="conn-state error hidden"></p>
+            </div>
+
+            <div id="account-signed-in" class="hidden">
+              <p class="muted" id="account-label" style="margin-bottom:10px;"></p>
+              <button id="btn-signout" class="btn btn-ghost btn-small">Sign out</button>
+            </div>
+          </div>
+
+          <div class="card card-wide">
+            <h2>Leaderboard</h2>
+            <p class="muted" id="leaderboard-note">Add your Firebase config to turn this into a shared leaderboard across devices — see README.</p>
+            <ol id="leaderboard-list" class="history-list"></ol>
+          </div>
+        </div>
+
+        <!-- WATCH -->
+        <div id="screen-watch" class="screen hidden">
+          <div class="card card-wide">
+            <h2>Watch chess</h2>
+            <p class="muted">A few good places to watch live games and broadcasts. These open in a new tab.</p>
+          </div>
+          <a class="card card-wide link-card" href="https://www.chess.com/events" target="_blank" rel="noopener noreferrer">
+            <h3>Chess.com Events</h3>
+            <p class="muted">Live tournaments, titled events, and broadcasts.</p>
+          </a>
+          <a class="card card-wide link-card" href="https://lichess.org/broadcast" target="_blank" rel="noopener noreferrer">
+            <h3>Lichess Broadcasts</h3>
+            <p class="muted">Free live broadcasts of official over-the-board events.</p>
+          </a>
+          <a class="card card-wide link-card" href="https://chessbase.in/" target="_blank" rel="noopener noreferrer">
+            <h3>ChessBase India</h3>
+            <p class="muted">News and coverage of Indian and international chess.</p>
+          </a>
+        </div>
+
         <div id="promo-modal" class="modal hidden">
           <div class="modal-card">
             <p>Promote your pawn to:</p>
@@ -468,6 +511,17 @@
               <button data-piece="r">♜ Rook</button>
               <button data-piece="b">♝ Bishop</button>
               <button data-piece="n">♞ Knight</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="welcome-modal" class="modal hidden">
+          <div class="modal-card">
+            <h2 style="margin-top:0;">Welcome to Oakwood Chess</h2>
+            <p class="muted">Sign in to keep your username and rating with you on any device — or jump right in as a guest and sign in later from the Account tab.</p>
+            <div class="controls" style="justify-content:center;">
+              <button id="btn-welcome-signin" class="btn btn-primary btn-small">Sign in</button>
+              <button id="btn-welcome-guest" class="btn btn-ghost btn-small">Continue as guest</button>
             </div>
           </div>
         </div>
@@ -483,6 +537,12 @@
       <button class="nav-btn" data-nav="learn">
         <span class="nav-icon">🎓</span><span>Learn</span>
       </button>
+      <button class="nav-btn" data-nav="watch">
+        <span class="nav-icon">📺</span><span>Watch</span>
+      </button>
+      <button class="nav-btn" data-nav="account">
+        <span class="nav-icon">👤</span><span>Account</span>
+      </button>
     </nav>
 
     <footer class="foot">
@@ -492,6 +552,7 @@
       </div>
       <p>Runs entirely in the browser &mdash; games are saved only on this device.</p>
     </footer>
+  </div>
   </div>
 
   <script src="vendor/peerjs.min.js"></script>

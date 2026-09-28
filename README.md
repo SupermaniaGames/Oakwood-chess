@@ -1,18 +1,30 @@
 # Oakwood Chess
 
-A small, self-contained chess app: play locally on one computer, or create a
-room and send the link to a friend for a live online game. No accounts, no
-backend server to run — it's a handful of static files.
+A small, self-contained chess app: play locally, against a built-in bot, or
+with a friend online. No backend server to run — it's a handful of static
+files.
+
+## Getting around
+
+- **Mobile:** a bottom bar — Home, Learn, Watch, Account.
+- **Desktop:** a persistent left sidebar with the same four sections
+  (no bottom bar on desktop — it looked out of place with the extra
+  screen width, so it's hidden there).
+- **Home** is just ways to start or resume playing: local, vs the computer,
+  online, plus your game history. Rating, sign-in and the leaderboard live
+  under **Account** instead, and the rules/lessons live under **Learn**.
 
 ## Play it
 
-- **Pick a time control** on the home screen (untimed, 5, 10 or 15 minutes)
-  before starting either kind of game.
+- **Pick a time control** (untimed, 5, 10 or 15 minutes) before starting a
+  local or online game.
 - **Locally on one PC:** click "Play locally, one board two players" and pass
   the device back and forth, taking turns clicking the board.
-- **Online with a friend:** click "Create a room for a friend", then copy the
-  link and send it (text, Discord, email, whatever) to your friend. When they
-  open it, you're connected and playing. You're White, they're Black.
+- **Vs the computer:** pick Easy/Medium/Hard and which color you want, right
+  on the home screen — runs entirely offline, no opponent required.
+- **Online with a friend:** click "Create a room for a friend", then share
+  the code or link. When they open it, you're connected and playing. You're
+  White, they're Black.
 
 Moves travel directly between the two browsers over WebRTC (peer-to-peer) —
 the only outside service involved is PeerJS's free public broker, which just
@@ -46,25 +58,44 @@ anywhere with HTTPS — installability needs a secure origin):
   most likely wasn't open yet or the host closed the tab; ask them to
   re-share the current code.
 
-## Rating & leaderboard
+## Account, rating & leaderboard
 
-- There's a simple personal Elo rating (starts at 1200), updated after each
+Everything about your identity now lives under the **Account** tab:
+
+- **Username**: type one and tap **Check** to see if it's taken before you
+  commit — usernames are unique (enforced by Firestore, not just the UI).
+- **Rating**: a simple Elo rating (starts at 1200), updated after each
   *online* game based on your result and the opponent's rating at the time.
-  It's shown on the home screen and noted in your game history.
-- This rating lives only on your device right now — it's "yours," not a
-  shared leaderboard between you and your friend. A real shared leaderboard
-  (or cross-device history) needs a small database, which is the next
-  section.
+- **Sign in with Google or email** to carry your username and rating to any
+  device. The first time you open the app (with Firebase configured), a
+  welcome prompt offers sign-in or "continue as guest" — guests can still
+  set a username and appear on the leaderboard, it just stays on that one
+  device/browser until they sign in.
+- Signing in **upgrades** your current guest session into a permanent
+  account where possible, so your existing username/rating carry over
+  rather than resetting. Signing into an account that already exists (from
+  another device) pulls *that* account's real saved username and rating —
+  this is also what fixes the old "username field is empty after signing in
+  on my other device" issue: it used to read from local storage only, now
+  it fetches your actual saved profile from Firestore on sign-in.
+- Without Firebase configured, all of this still works exactly as before —
+  purely local, no account, no shared leaderboard.
 
 ## Look & feel
 
-- Pieces are now proper vector artwork (the well-known "Cburnett" Staunton
-  set used by most chess sites) instead of text glyphs, on the classic
+- Pieces are proper vector artwork (the well-known "Cburnett" Staunton set
+  used by most chess sites) instead of text glyphs, on the classic
   green-and-cream board. See the attribution note in `LICENSE` — this
   specific artwork is CC BY-SA 3.0, everything else in the project is MIT.
+- The last move's from/to squares get a solid yellow highlight, matching
+  chess.com's style, instead of a thin border.
+- Sound effects for moves, captures, check, and game end — synthesized
+  in-browser (no audio files to load), so nothing to fetch or license.
+  There's a 🔊/🔇 toggle among the in-game buttons.
 - The home screen shows the app icon (`icons/icon-512.png`) instead of a
   text title — once you drop in your own logo (see "Using your own logo /
   icon" below), it'll show there automatically.
+
 
 ## If you left the app to share the code and it broke
 
@@ -112,10 +143,18 @@ fixed version.
 - **Clock:** shown next to each player when a time control is selected; a
   side that runs out loses automatically.
 - **Chat:** a simple text chat is available in online games.
-- **Undo:** in a local game it's instant. In an online game it's a request —
-  your friend has to accept it, since it affects both of you.
-- **Rematch:** local restarts instantly; online sends a request the same way
-  undo does, and swaps who plays White each time.
+- **Undo:** in a local or bot game it's instant (vs a bot, it retracts both
+  your move and the bot's reply). In an online game it's a request — your
+  friend has to accept it, since it affects both of you.
+- **Rematch:** local/bot restarts instantly; online sends a request the same
+  way undo does, and swaps who plays White each time.
+- **On mobile**, the action buttons (flip, undo, sound, resign, home) sit in
+  a fixed bar at the bottom of the screen during play, like chess.com's —
+  rather than in the scrolling sidebar, which was pushing things off-screen.
+- **Leaving mid-game**: the Home button asks for confirmation if the game
+  isn't finished, with wording that matches what actually happens (a local
+  game is saved for later; a bot game is abandoned; an online game
+  disconnects your friend).
 
 ## Run it locally
 
@@ -193,9 +232,9 @@ paste six values into one file. No credit card required.
    with an "unauthorized domain" error once deployed (it works on
    `localhost` by default, which is why it can seem fine while testing
    locally and then break after deploying).
-8. Redeploy (push to GitHub, or just refresh if testing locally). The home
-   screen's Account card will show sign-in options, and the Leaderboard
-   card will start showing real data.
+8. Redeploy (push to GitHub, or just refresh if testing locally). The
+   Account tab will show sign-in options, and its Leaderboard will start
+   showing real data.
 
 **Worth knowing:** everyone starts as an anonymous player (so casual local
 play still syncs a rating). Signing in with Google or email *upgrades* that
@@ -203,6 +242,29 @@ same session to a real account rather than starting a new one, so your
 existing rating carries over. If someone signs into an email/Google account
 that already exists (from another device), that pre-existing account's own
 rating is what loads — which is the correct behavior, just worth knowing.
+
+## Resetting the leaderboard
+
+If you tested this before usernames were unique and now see duplicate or
+"Anonymous" entries: the app already hides those in the display (it
+de-duplicates by name and drops unnamed entries when rendering), but the
+old, messy documents are still sitting in your actual database. I can't
+reach into your Firebase project to clean it up myself — here's how to do
+it from the console:
+
+1. Firebase console → **Firestore Database** → **Data** tab.
+2. Open the **players** collection. Click the **⋮** menu next to it (or
+   select all documents) and choose **Delete collection** — this wipes
+   every saved rating.
+3. Do the same for the **usernames** collection, so old claimed names are
+   released and can be picked again.
+4. Everyone's rating resets to 1200 and the leaderboard starts empty. Local
+   game history (on each device) is untouched — this only clears the shared
+   Firestore data.
+
+This shouldn't recur going forward: unnamed/anonymous profiles no longer
+get written to the leaderboard at all, and usernames are only ever claimed
+through the unique-checking path.
 
 ## Deploy to GitHub Pages
 
@@ -238,6 +300,8 @@ style.css         Visual design
 main.js           Screens, board rendering, move handling, game state
 multiplayer.js    Thin wrapper around PeerJS for the online room
 clock.js          Per-player countdown clock
+bot.js            Offline computer opponent (minimax + alpha-beta)
+sound.js          Synthesized move/capture/check/game-end sound effects
 storage.js        localStorage helpers (resume, history, profile/rating)
 leaderboard.js    Optional shared leaderboard (Firebase Firestore)
 firebase-config.js  Your Firebase project config (edit this — see above)

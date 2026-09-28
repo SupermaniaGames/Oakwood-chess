@@ -21,8 +21,11 @@ import {
   signInWithEmail,
   signOutUser,
   claimUsername,
+  fetchMyProfile,
+  checkUsernameAvailable,
 } from "./leaderboard.js";
 import { chooseBotMove, DIFFICULTIES } from "./bot.js";
+import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
 const PEER_PREFIX = "oakwood-chess-";
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — easy to read aloud
@@ -90,7 +93,7 @@ let botColorChoice = "w";
 
 function showScreen(name) {
   viewState = name;
-  ["home", "room", "game", "replay", "learn"].forEach((s) =>
+  ["home", "room", "game", "replay", "learn", "account", "watch"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
   el("board-wrap").classList.toggle("hidden", !(name === "game" || name === "replay"));
@@ -272,10 +275,23 @@ function onSquareClick(square) {
   render();
 }
 
+function playMoveSound(move) {
+  if (game.isGameOver()) {
+    playSound("gameEnd");
+  } else if (game.inCheck()) {
+    playSound("check");
+  } else if (move && (move.captured || (move.flags && move.flags.includes("e")))) {
+    playSound("capture");
+  } else {
+    playSound("move");
+  }
+}
+
 function applyMove({ from, to, promotion }) {
   const move = game.move({ from, to, promotion });
   if (!move) return null;
   lastMove = { from, to };
+  playMoveSound(move);
   if (clock) clock.switchTo(game.turn());
   if (mode === "online") room.send({ type: "move", from, to, promotion });
   if (mode === "local") saveLocalProgress();
@@ -298,6 +314,7 @@ function maybeTriggerBotMove() {
     const applied = game.move(botMove);
     if (applied) {
       lastMove = { from: applied.from, to: applied.to };
+      playMoveSound(applied);
       if (clock) clock.switchTo(game.turn());
     }
     render();
@@ -526,12 +543,14 @@ function beginOnlineGame() {
 
 function handlePeerData(data) {
   switch (data.type) {
-    case "move":
-      game.move({ from: data.from, to: data.to, promotion: data.promotion });
+    case "move": {
+      const applied = game.move({ from: data.from, to: data.to, promotion: data.promotion });
       lastMove = { from: data.from, to: data.to };
+      if (applied) playMoveSound(applied);
       if (clock) clock.switchTo(game.turn());
       render();
       break;
+    }
     case "resign":
       endGame("Your friend resigned. You win!", "win");
       render();
@@ -771,22 +790,38 @@ function hideAuthError() {
   el("auth-error").classList.add("hidden");
 }
 
-function afterSignIn() {
+async function afterSignIn() {
   el("auth-email").value = "";
   el("auth-password").value = "";
-  const user = getCurrentUser();
-  const profile = getProfile();
-  if (!profile.name && user?.displayName) {
-    profile.name = user.displayName.slice(0, 24);
-    saveProfile(profile);
-  }
-  if (isConfigured() && profile.name) {
-    claimUsername(profile.name); // best-effort; if taken, they can change it via the field
+  const typedName = el("profile-name").value.trim().slice(0, 24);
+
+  const existing = await fetchMyProfile();
+  if (existing) {
+    // A returning account — its saved profile is the source of truth,
+    // regardless of whatever happens to be cached on this device.
+    saveProfile({ name: existing.name || "", rating: existing.rating ?? 1200, games: existing.games ?? 0 });
+    hideNameError();
+  } else {
+    // Brand new account — claim whichever username they typed (falling
+    // back to a Google display name if they didn't type one).
+    const user = getCurrentUser();
+    const nameToClaim = typedName || (user?.displayName ? user.displayName.slice(0, 24) : "");
+    if (nameToClaim) {
+      const res = await claimUsername(nameToClaim);
+      if (res.ok) {
+        const profile = getProfile();
+        profile.name = nameToClaim;
+        saveProfile(profile);
+        hideNameError();
+      } else {
+        showNameError(`Signed in, but couldn't claim that username: ${res.error}`);
+      }
+    }
+    pushProfile(getProfile());
   }
   renderAccountCard();
   renderProfile();
   renderLeaderboard();
-  pushProfile(getProfile());
 }
 
 el("btn-google-signin").addEventListener("click", async () => {
@@ -796,7 +831,7 @@ el("btn-google-signin").addEventListener("click", async () => {
     showAuthError(res.error);
     return;
   }
-  afterSignIn();
+  await afterSignIn();
 });
 
 el("btn-email-signin").addEventListener("click", async () => {
@@ -812,7 +847,7 @@ el("btn-email-signin").addEventListener("click", async () => {
     showAuthError(res.error);
     return;
   }
-  afterSignIn();
+  await afterSignIn();
 });
 
 el("btn-email-signup").addEventListener("click", async () => {
@@ -828,7 +863,7 @@ el("btn-email-signup").addEventListener("click", async () => {
     showAuthError(res.error);
     return;
   }
-  afterSignIn();
+  await afterSignIn();
 });
 
 el("btn-signout").addEventListener("click", async () => {
@@ -845,6 +880,7 @@ function renderProfile() {
   el("rating-record").textContent =
     profile.games > 0 ? `${profile.games} rated game${profile.games === 1 ? "" : "s"} played` : "No rated games yet.";
   hideNameError();
+  el("username-check-result").classList.add("hidden");
 }
 
 async function renderLeaderboard() {
@@ -905,6 +941,44 @@ async function renderLeaderboard() {
     list.appendChild(li);
   });
 }
+
+el("profile-name").addEventListener("input", () => {
+  el("username-check-result").classList.add("hidden");
+});
+
+el("btn-check-username").addEventListener("click", async () => {
+  const resultEl = el("username-check-result");
+  const name = el("profile-name").value.trim();
+  if (!name) {
+    resultEl.textContent = "Type a username first.";
+    resultEl.className = "conn-state error";
+    resultEl.classList.remove("hidden");
+    return;
+  }
+  if (!isConfigured()) {
+    resultEl.textContent = "Add your Firebase config to check availability — see README.";
+    resultEl.className = "conn-state";
+    resultEl.classList.remove("hidden");
+    return;
+  }
+  resultEl.textContent = "Checking…";
+  resultEl.className = "conn-state";
+  resultEl.classList.remove("hidden");
+  const res = await checkUsernameAvailable(name);
+  if (!res.ok) {
+    resultEl.textContent = res.error;
+    resultEl.className = "conn-state error";
+  } else if (res.mine) {
+    resultEl.textContent = "That's already your username.";
+    resultEl.className = "conn-state";
+  } else if (res.available) {
+    resultEl.textContent = "Available!";
+    resultEl.className = "conn-state success";
+  } else {
+    resultEl.textContent = "Already taken — try another.";
+    resultEl.className = "conn-state error";
+  }
+});
 
 el("profile-name").addEventListener("change", async () => {
   const newName = el("profile-name").value.trim().slice(0, 24);
@@ -971,13 +1045,17 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     } else if (btn.dataset.nav === "learn") {
       setNavActive("learn");
       showScreen("learn");
+    } else if (btn.dataset.nav === "watch") {
+      setNavActive("watch");
+      showScreen("watch");
+    } else if (btn.dataset.nav === "account") {
+      setNavActive("account");
+      showScreen("account");
+      renderAccountCard();
+      renderProfile();
+      renderLeaderboard();
     }
   });
-});
-
-el("btn-goto-learn").addEventListener("click", () => {
-  setNavActive("learn");
-  showScreen("learn");
 });
 
 el("btn-learn-back").addEventListener("click", goHome);
@@ -1106,36 +1184,31 @@ el("btn-replay-back").addEventListener("click", goHome);
 // ---------- Navigation ----------
 
 function goHome() {
+  if (mode && viewState === "game" && !game.isGameOver()) {
+    const messages = {
+      local: "Leave this game? It'll be saved so you can resume from Home.",
+      bot: "Leave this game? Your progress against the bot won't be saved.",
+      online: "Leave this game? Your friend will see you disconnect, and it won't be saved.",
+    };
+    if (!window.confirm(messages[mode] || "Leave this game?")) return;
+  }
   if (mode === "local" && !game.isGameOver()) {
     saveLocalProgress();
   }
   if (mode === "online" && room) {
     room.close();
   }
-  if (clock) clock.stop();
   mode = null;
   room = null;
+  if (clock) clock.stop();
   setNavActive("home");
   showScreen("home");
   renderResumeBanner();
   renderHistoryList();
-  renderProfile();
-  renderLeaderboard();
-  renderAccountCard();
 }
 
 el("btn-home").addEventListener("click", goHome);
-el("btn-cancel-room").addEventListener("click", () => {
-  if (room) room.close();
-  room = null;
-  mode = null;
-  showScreen("home");
-  renderResumeBanner();
-  renderHistoryList();
-  renderProfile();
-  renderLeaderboard();
-  renderAccountCard();
-});
+el("btn-cancel-room").addEventListener("click", goHome);
 
 el("btn-local").addEventListener("click", startLocal);
 el("btn-create").addEventListener("click", startOnlineAsHost);
@@ -1157,6 +1230,17 @@ el("btn-flip").addEventListener("click", () => {
   flipped = !flipped;
   render();
 });
+
+function updateSoundButton() {
+  el("btn-sound").textContent = isSoundEnabled() ? "🔊" : "🔇";
+}
+
+el("btn-sound").addEventListener("click", () => {
+  setSoundEnabled(!isSoundEnabled());
+  updateSoundButton();
+  if (isSoundEnabled()) playSound("move"); // quick audible confirmation it's back on
+});
+updateSoundButton();
 
 // ---------- Recovering from backgrounding the tab ----------
 
@@ -1246,13 +1330,31 @@ if (joinId) {
   renderProfile();
   renderLeaderboard();
   renderAccountCard();
+
+  if (isConfigured() && !localStorage.getItem("oakwood.onboarded")) {
+    el("welcome-modal").classList.remove("hidden");
+  }
 }
 render();
 
-// Keep the home screen in sync if auth state changes asynchronously
+el("btn-welcome-signin").addEventListener("click", () => {
+  localStorage.setItem("oakwood.onboarded", "1");
+  el("welcome-modal").classList.add("hidden");
+  setNavActive("account");
+  showScreen("account");
+  renderAccountCard();
+  renderProfile();
+  renderLeaderboard();
+});
+el("btn-welcome-guest").addEventListener("click", () => {
+  localStorage.setItem("oakwood.onboarded", "1");
+  el("welcome-modal").classList.add("hidden");
+});
+
+// Keep the account screen in sync if auth state changes asynchronously
 // (e.g. a popup sign-in completing) without another explicit re-render call.
 onAuthChange(() => {
-  if (viewState === "home") {
+  if (viewState === "account") {
     renderAccountCard();
     renderProfile();
     renderLeaderboard();

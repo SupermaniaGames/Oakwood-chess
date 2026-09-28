@@ -10,6 +10,7 @@ const APP_SHELL = [
   "./leaderboard.js",
   "./firebase-config.js",
   "./bot.js",
+  "./sound.js",
   "./manifest.json",
   "./vendor/chess.js",
   "./vendor/peerjs.min.js",

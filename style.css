@@ -99,7 +99,7 @@ body {
 .sq.dark { background: var(--sq-dark); }
 
 .sq.selected::after { content: ""; position: absolute; inset: 0; background: rgba(139,191,90,0.5); }
-.sq.last-move { box-shadow: inset 0 0 0 3px rgba(232,214,120,0.6); }
+.sq.last-move { background-image: linear-gradient(rgba(255, 221, 87, 0.55), rgba(255, 221, 87, 0.55)); }
 .sq.legal::before {
   content: "";
   position: absolute;
@@ -293,7 +293,21 @@ body {
   color: var(--accent-bright);
 }
 
+.username-row { display: flex; gap: 8px; align-items: center; }
+.username-row .text-input { flex: 1; }
+
+.link-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease;
+}
+.link-card:hover { border-color: var(--accent); }
+.link-card h3 { margin: 0 0 6px; font-family: var(--font-display); font-size: 1.05rem; color: var(--parchment); }
+.link-card .muted { margin: 0; }
+
 .conn-state.error { color: var(--danger); }
+.conn-state.success { color: var(--accent-bright); }
 
 .hidden { display: none !important; }
 
@@ -328,9 +342,36 @@ body {
   flex-shrink: 0;
 }
 
-@media (max-width: 760px) {
+@media (max-width: 899px) {
   .table { flex-direction: column; align-items: center; }
   .panel { width: 100%; max-width: 480px; }
+
+  /* On mobile, the game's action buttons become a fixed bottom toolbar —
+     like chess.com's in-game bar — instead of sitting inline in the
+     sidebar card, which was pushing content below the fold. */
+  #game-controls {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    margin: 0;
+    gap: 2px;
+    flex-wrap: nowrap;
+    background: var(--panel);
+    border-top: 1px solid var(--panel-line);
+    padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  #game-controls .btn {
+    flex: 1;
+    padding: 10px 2px;
+    font-size: 0.7rem;
+    text-align: center;
+    white-space: nowrap;
+  }
+  /* Leave room so the card's own content (move list etc.) isn't hidden
+     behind the fixed toolbar. */
+  #screen-game { padding-bottom: 60px; }
 }
 
 /* --- Bottom navigation (mobile-first, shown everywhere except active play) --- */
@@ -373,32 +414,73 @@ body {
   flex-shrink: 0;
 }
 
+/* --- Desktop sidebar (mobile shows the bottom nav instead) --- */
+
+.side-nav { display: none; }
+
 /* --- Desktop: reclaim the wasted side space --- */
 
 @media (min-width: 900px) {
-  .app { max-width: 1360px; }
+  .app-shell { display: flex; align-items: flex-start; }
+
+  .side-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 200px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: 20px 12px;
+    background: var(--panel);
+    border-right: 1px solid var(--panel-line);
+    box-sizing: border-box;
+  }
+  .side-nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px 20px;
+    font-family: var(--font-display);
+    font-weight: 600;
+    color: var(--parchment);
+  }
+  .side-nav-logo { width: 32px; height: 32px; border-radius: 8px; }
+  .side-nav-btn {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+  }
+  .side-nav-btn .nav-icon { font-size: 1.15rem; }
+  .side-nav-btn:hover { background: rgba(139,191,90,0.1); }
+  .side-nav-btn.active { background: rgba(139,191,90,0.16); color: var(--accent-bright); }
+
+  .app { max-width: 1200px; flex: 1; }
   .table { gap: 48px; align-items: flex-start; }
 
-  .board { width: min(50vw, 620px); height: min(50vw, 620px); }
+  .board { width: min(46vw, 620px); height: min(46vw, 620px); }
 
   .panel { width: 380px; }
 
-  /* The home screen has no board next to it, so let it use the freed-up
-     width as a proper multi-column dashboard instead of one narrow column. */
-  .panel:has(#screen-home:not(.hidden)) {
-    width: min(760px, 62vw);
+  /* Home/Account/Watch have no board next to them, so let them use the
+     freed-up width as a proper multi-column dashboard instead of one
+     narrow column. */
+  .panel:has(#screen-home:not(.hidden)),
+  .panel:has(#screen-account:not(.hidden)),
+  .panel:has(#screen-watch:not(.hidden)) {
+    width: min(760px, 56vw);
   }
-  #screen-home {
+  #screen-home, #screen-account, #screen-watch {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
   }
-  /* Leaderboard and History are lists — give them the full row width
-     rather than squeezing into one column. */
-  #screen-home .card:nth-child(5),
-  #screen-home .card:nth-child(9) {
-    grid-column: 1 / -1;
-  }
+  /* Lists and the leaderboard want the full row rather than one column. */
+  .card-wide { grid-column: 1 / -1; }
 
   .bottom-nav { display: none; }
   .app { padding-bottom: 40px; }
