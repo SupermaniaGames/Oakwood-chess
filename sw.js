@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v4";
+const CACHE_NAME = "oakwood-chess-v5";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -19,6 +19,7 @@ const APP_SHELL = [
   "./icons/apple-touch-icon.png",
   "./icons/favicon-32.png",
   "./icons/credits/boring-games.png",
+  "./icons/credits/supermania-games.png",
 ];
 
 self.addEventListener("install", (event) => {

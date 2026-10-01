@@ -20,8 +20,18 @@ files.
   local or online game.
 - **Locally on one PC:** click "Play locally, one board two players" and pass
   the device back and forth, taking turns clicking the board.
-- **Vs the computer:** pick Easy/Medium/Hard and which color you want, right
-  on the home screen — runs entirely offline, no opponent required.
+- **Vs the computer:** pick a bot level — nine rungs from 250 to 1800,
+  grouped Beginner / Intermediate / Advanced — and which color you want,
+  right on the home screen. It runs entirely offline. The Elo numbers are
+  *nominal labels*: the ladder is tuned so each rung reliably beats the one
+  below it, but it hasn't been calibrated against real rated play, so
+  don't expect a "1200" bot to play exactly like a 1200-rated human.
+  Weaker rungs make human-looking mistakes (they sometimes pick a
+  reasonable-but-not-best move) rather than random ones.
+- **Custom position (friend games):** tick "Set up a custom position first"
+  before creating a room, tap pieces to remove them (kings always stay),
+  then create the room — your friend starts from the same position.
+  Rematches and replays use it too.
 - **Online with a friend:** click "Create a room for a friend", then share
   the code or link. When they open it, you're connected and playing. You're
   White, they're Black.
@@ -57,6 +67,25 @@ anywhere with HTTPS — installability needs a secure origin):
   most common cause. If a code shows "doesn't match an open room," the room
   most likely wasn't open yet or the host closed the tab; ask them to
   re-share the current code.
+
+## Watching games (spectators)
+
+Online games can be watched live, read-only — it's **opt-in per game**:
+the host ticks "Let others watch this game live" when creating the room.
+
+- Once the opponent joins, the host gets a **Copy watch link** button
+  (`…/?watch=CODE`). Anyone with that link can watch — no Firebase needed.
+- If Firebase is configured, the game is also listed under the **Watch**
+  tab → *Live at Oakwood Chess*, so people can find it without a link.
+  Listings disappear when the game ends or the host leaves.
+- Spectators see the current position (even if they join mid-game), moves,
+  the move list and chat; they can't move, chat, or affect the game. Games
+  without the tick refuse spectators, and a third person opening an invite
+  link to a full room is turned away rather than silently watching.
+- Spectated games aren't saved to the spectator's history or rating.
+- Moves still travel peer-to-peer through the host's browser, so a game
+  with many watchers uses the host's upload bandwidth, and the game ends
+  for everyone if the host closes their tab.
 
 ## Account, rating & leaderboard
 
@@ -201,6 +230,13 @@ paste six values into one file. No credit card required.
          allow read: if true;
          allow write: if request.auth != null && request.auth.uid == uid;
        }
+       match /liveGames/{code} {
+         allow read: if true;
+         allow create: if request.auth != null
+                        && request.resource.data.hostUid == request.auth.uid;
+         allow update, delete: if request.auth != null
+                        && resource.data.hostUid == request.auth.uid;
+       }
        match /usernames/{name} {
          allow read: if true;
          allow create: if request.auth != null
@@ -214,6 +250,8 @@ paste six values into one file. No credit card required.
      }
    }
    ```
+   `liveGames` is the Watch tab's list of games hosts have opted to share
+   (only the host who listed a game can change or remove it).
    `players` holds each account's rating; `usernames` is a separate
    lookup collection that's what actually makes usernames unique — claiming
    one writes a `usernames/<lowercased-name>` doc, and the rules above only

@@ -1,6 +1,6 @@
 import { Chess } from "./vendor/chess.js";
 import { Room } from "./multiplayer.js";
-import { Clock, formatMs } from "./clock.js";
+import { Clock, formatMs, TIME_CONTROLS } from "./clock.js";
 import {
   saveInProgressLocalGame,
   loadInProgressLocalGame,
@@ -23,8 +23,11 @@ import {
   claimUsername,
   fetchMyProfile,
   checkUsernameAvailable,
+  registerLiveGame,
+  unregisterLiveGame,
+  fetchLiveGames,
 } from "./leaderboard.js";
-import { chooseBotMove, DIFFICULTIES } from "./bot.js";
+import { chooseBotMove, TIERS } from "./bot.js";
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
 const PEER_PREFIX = "oakwood-chess-";
@@ -77,6 +80,7 @@ let legalTargets = [];
 let lastMove = null;
 let pendingPromotion = null;
 let gameRecorded = false;
+let endText = null; // final result text, so later re-renders can't overwrite it
 let room = null;
 let clock = null;
 let outgoingRequest = null; // "undo" | "rematch" | null — a request we sent, awaiting reply
@@ -86,18 +90,27 @@ let replayIndex = 0;
 let currentRoomCode = "";
 let opponentName = "Friend";
 let opponentRating = null;
-let botDifficulty = "medium";
+let botElo = 1000;
 let botColorChoice = "w";
+let spectateHostName = "Host";
+let spectateGuestName = "Guest";
+let customStartFen = null; // FEN both players started from (null = standard)
+let spectateHostIsWhite = true;
+let liveListed = false; // host only: is this game in the Watch directory?
 
 // ---------- Screen management ----------
 
 function showScreen(name) {
   viewState = name;
-  ["home", "room", "game", "replay", "learn", "account", "watch"].forEach((s) =>
+  ["home", "room", "setup", "game", "replay", "learn", "account", "watch"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
-  el("board-wrap").classList.toggle("hidden", !(name === "game" || name === "replay"));
+  const boardVisible = name === "game" || name === "replay" || name === "setup";
+  el("board-wrap").classList.toggle("hidden", !boardVisible);
   el("bottom-nav").classList.toggle("hidden", name === "game");
+  // Credits and the "runs in your browser" note belong on the home page
+  // only — during play they just take up space.
+  el("app-footer").classList.toggle("hidden", name !== "home");
 }
 
 // ---------- Rendering ----------
@@ -110,6 +123,7 @@ function render() {
   renderBoard();
   if (viewState === "replay") return;
   renderMoveList();
+  renderCapturedTray();
   renderStatus();
   finalizeIfOver();
 }
@@ -145,6 +159,8 @@ function renderBoard() {
           if (legal.captured || legal.flags?.includes("e")) sq.classList.add("capture");
         }
         sq.addEventListener("click", () => onSquareClick(square));
+      } else if (viewState === "setup") {
+        sq.addEventListener("click", () => onSetupSquareClick(square));
       }
 
       if (lastMove && (lastMove.from === square || lastMove.to === square)) {
@@ -159,20 +175,94 @@ function renderBoard() {
   }
 }
 
+// A small piece icon (same SVG sprite as the board) for use in the move
+// list and the captured-pieces tray.
+function svgIcon(color, type, className) {
+  const svg = pieceElement(color, type);
+  svg.setAttribute("class", className);
+  return svg;
+}
+
 function renderMoveList() {
   const list = el("move-list");
-  const history = game.history();
+  const history = game.history({ verbose: true });
   list.innerHTML = "";
+
+  // One <span class="mv"> per half-move: piece icon + the rest of the SAN
+  // ("Nf6" -> [knight icon] "f6"). Pawn moves and castling have no piece
+  // letter to swap out, so they stay plain text.
+  const moveSpan = (m, isCurrent) => {
+    const span = document.createElement("span");
+    span.className = "mv" + (isCurrent ? " current" : "");
+    const isCastle = m.san.startsWith("O-O");
+    if (m.piece !== "p" && !isCastle) {
+      span.appendChild(svgIcon(m.color, m.piece, "mv-icon"));
+      span.appendChild(document.createTextNode(m.san.slice(1)));
+    } else {
+      span.textContent = m.san;
+    }
+    return span;
+  };
+
   for (let i = 0; i < history.length; i += 2) {
     const li = document.createElement("li");
-    const num = i / 2 + 1;
-    li.innerHTML = `<b>${num}.</b> ${history[i] || ""} ${history[i + 1] || ""}`;
+    const num = document.createElement("b");
+    num.textContent = `${i / 2 + 1}.`;
+    li.appendChild(num);
+    li.appendChild(document.createTextNode(" "));
+    li.appendChild(moveSpan(history[i], i === history.length - 1));
+    if (history[i + 1]) li.appendChild(moveSpan(history[i + 1], i + 1 === history.length - 1));
     list.appendChild(li);
   }
   list.scrollTop = list.scrollHeight;
 }
 
+// Pieces each side has captured, plus a material-advantage number next to
+// whoever is ahead (standard chess UI). Derived from move history, so it
+// stays correct through undo and resuming a saved game.
+const CAPTURE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+function renderCapturedTray() {
+  const youColor = mode === "local" || mode === "spectate" ? "w" : myColor;
+  const themColor = youColor === "w" ? "b" : "w";
+  const captured = { w: [], b: [] }; // keyed by who *captured* them
+  for (const m of game.history({ verbose: true })) {
+    if (m.captured) captured[m.color].push(m.captured);
+  }
+  const score = (color) => captured[color].reduce((sum, t) => sum + CAPTURE_VALUES[t], 0);
+  const diff = score(youColor) - score(themColor);
+
+  const fill = (trayId, byColor, advantage) => {
+    const tray = el(trayId);
+    tray.innerHTML = "";
+    const victimColor = byColor === "w" ? "b" : "w";
+    [...captured[byColor]]
+      .sort((a, b) => CAPTURE_VALUES[b] - CAPTURE_VALUES[a])
+      .forEach((type) => tray.appendChild(svgIcon(victimColor, type, "cap-piece")));
+    if (advantage > 0) {
+      const adv = document.createElement("span");
+      adv.className = "cap-adv";
+      adv.textContent = `+${advantage}`;
+      tray.appendChild(adv);
+    }
+  };
+  fill("captured-you", youColor, Math.max(diff, 0));
+  fill("captured-them", themColor, Math.max(-diff, 0));
+}
+
 function renderStatus() {
+  if (viewState === "setup") {
+    statusEl.textContent = "Tap a piece to remove it.";
+    return;
+  }
+  if (gameRecorded && endText) {
+    // The game ended (possibly by resignation or timeout, which chess.js
+    // knows nothing about) — keep showing the result rather than letting a
+    // re-render replace it with "Your move".
+    statusEl.textContent = endText;
+    el("tag-you").classList.remove("active");
+    el("tag-them").classList.remove("active");
+    return;
+  }
   if (game.isCheckmate()) {
     const winner = game.turn() === "w" ? "Black" : "White";
     statusEl.textContent = `Checkmate — ${winner} wins.`;
@@ -182,6 +272,9 @@ function renderStatus() {
     statusEl.textContent = "Draw.";
   } else if (game.inCheck()) {
     statusEl.textContent = `${game.turn() === "w" ? "White" : "Black"} is in check.`;
+  } else if (mode === "spectate") {
+    const { white, black } = spectateNames();
+    statusEl.textContent = `${game.turn() === "w" ? white : black} to move`;
   } else if (mode === "bot") {
     statusEl.textContent = game.turn() === myColor ? "Your move" : "Bot is thinking…";
   } else if (mode === "online") {
@@ -208,8 +301,11 @@ function updateSideLabels() {
     themLabel.textContent = "Black";
   } else if (mode === "bot") {
     youLabel.innerHTML = `You &middot; ${myColor === "w" ? "White" : "Black"}`;
-    const diffLabel = DIFFICULTIES[botDifficulty]?.label || "Medium";
-    themLabel.textContent = `Bot (${diffLabel}) · ${myColor === "w" ? "Black" : "White"}`;
+    themLabel.textContent = `Bot (${botElo} Elo) · ${myColor === "w" ? "Black" : "White"}`;
+  } else if (mode === "spectate") {
+    const { white, black } = spectateNames();
+    youLabel.textContent = `${white} · White`;
+    themLabel.textContent = `${black} · Black`;
   } else {
     youLabel.innerHTML = `You &middot; ${myColor === "w" ? "White" : "Black"}`;
     themLabel.textContent = `${opponentName} · ${myColor === "w" ? "Black" : "White"}`;
@@ -240,8 +336,8 @@ function onClockFlag(color) {
 // ---------- Interaction ----------
 
 function onSquareClick(square) {
-  if (viewState !== "game" || !mode) return;
-  if (game.isGameOver()) return;
+  if (viewState !== "game" || !mode || mode === "spectate") return;
+  if (game.isGameOver() || gameRecorded) return;
   if ((mode === "online" || mode === "bot") && game.turn() !== myColor) return;
 
   if (selected) {
@@ -301,15 +397,15 @@ function applyMove({ from, to, promotion }) {
 
 function maybeTriggerBotMove() {
   if (mode !== "bot" || viewState !== "game") return;
-  if (game.isGameOver()) return;
+  if (game.isGameOver() || gameRecorded) return;
   if (game.turn() === myColor) return;
   statusEl.textContent = "Bot is thinking…";
   el("btn-undo").disabled = true;
   const thinkingDelay = 300 + Math.random() * 300;
   setTimeout(() => {
     el("btn-undo").disabled = false;
-    if (mode !== "bot" || game.isGameOver()) return;
-    const botMove = chooseBotMove(game, botDifficulty);
+    if (mode !== "bot" || game.isGameOver() || gameRecorded) return;
+    const botMove = chooseBotMove(game, botElo);
     if (!botMove) return;
     const applied = game.move(botMove);
     if (applied) {
@@ -344,8 +440,10 @@ function applyLocalUndo() {
 }
 
 function applyRematch() {
-  game.reset();
+  if (customStartFen) game.load(customStartFen);
+  else game.reset();
   gameRecorded = false;
+  endText = null;
   selected = null;
   legalTargets = [];
   lastMove = null;
@@ -361,6 +459,7 @@ function applyRematch() {
   el("btn-rematch").classList.toggle("hidden", mode === "online");
   el("request-banner").classList.add("hidden");
   render();
+  if (mode === "online" && room && room.isHost && room.allowSpectators) listLiveGame();
 }
 
 // ---------- Local / online setup ----------
@@ -370,11 +469,18 @@ function resetTransientState() {
   legalTargets = [];
   lastMove = null;
   gameRecorded = false;
+  endText = null;
   outgoingRequest = null;
   incomingRequestType = null;
   el("request-banner").classList.add("hidden");
   el("btn-undo").disabled = false;
   el("btn-rematch").disabled = false;
+  // Undo the spectator-specific UI tweaks so the next game starts clean.
+  el("btn-undo").classList.remove("hidden");
+  el("spectator-banner").classList.add("hidden");
+  el("chat-form").classList.remove("hidden");
+  el("watchers-note").classList.add("hidden");
+  el("btn-copy-watch-game").classList.add("hidden");
 }
 
 function startLocal() {
@@ -434,10 +540,20 @@ function saveLocalProgress() {
   });
 }
 
-function startOnlineAsHost() {
+function startOnlineAsHost(customFen = null) {
   mode = "online";
   myColor = "w";
-  game.reset();
+  customStartFen = customFen;
+  if (customFen) {
+    try {
+      game.load(customFen);
+    } catch {
+      customStartFen = null;
+      game.reset();
+    }
+  } else {
+    game.reset();
+  }
   flipped = false;
   opponentName = "Friend";
   opponentRating = null;
@@ -458,13 +574,38 @@ function startOnlineAsHost() {
     },
     onConnected: () => {
       const profile = getProfile();
-      room.send({ type: "init", timeControl: timeControlKey, name: profile.name || "Friend", rating: profile.rating });
+      room.send({
+        type: "init",
+        timeControl: timeControlKey,
+        name: profile.name || "Friend",
+        rating: profile.rating,
+        fen: customStartFen,
+      });
       beginOnlineGame();
     },
     onData: handlePeerData,
     onPeerLeft: () => {
       statusEl.textContent = "Your friend disconnected.";
       if (clock) clock.stop();
+      delistLiveGame();
+    },
+    onSpectatorCountChange: (n) => {
+      el("watchers-count").textContent = n;
+      el("watchers-note").classList.toggle("hidden", n === 0);
+    },
+    // A spectator joining mid-game needs the current position, not just
+    // future moves — so send them a snapshot the moment they connect.
+    onSpectatorJoin: (sendTo) => {
+      sendTo({
+        type: "spectate-sync",
+        pgn: game.pgn(),
+        fen: game.fen(),
+        startFen: customStartFen,
+        hostName: getProfile().name || "Host",
+        guestName: opponentName,
+        hostIsWhite: myColor === "w",
+        timeControl: timeControlKey,
+      });
     },
     onError: (err) => {
       // A collision on the short code is routine (small ID space, shared
@@ -479,6 +620,7 @@ function startOnlineAsHost() {
       el("conn-state").classList.add("error");
     },
   });
+  room.allowSpectators = el("allow-spectators-toggle").checked;
   currentRoomCode = generateRoomCode();
   room.host(PEER_PREFIX + currentRoomCode);
 }
@@ -504,8 +646,22 @@ function startOnlineAsGuest(rawCode) {
       el("conn-state").textContent = "Connected — waiting for game info…";
     },
     onData: (data) => {
+      if (data.type === "spectate-denied") {
+        el("conn-state").textContent = "This room already has two players.";
+        el("conn-state").classList.add("error");
+        return;
+      }
       if (data.type === "init") {
         timeControlKey = data.timeControl;
+        customStartFen = data.fen || null;
+        if (customStartFen) {
+          try {
+            game.load(customStartFen);
+          } catch {
+            customStartFen = null;
+            game.reset();
+          }
+        }
         opponentName = data.name || "Friend";
         opponentRating = typeof data.rating === "number" ? data.rating : 1200;
         const profile = getProfile();
@@ -527,6 +683,145 @@ function startOnlineAsGuest(rawCode) {
   room.join(PEER_PREFIX + code);
 }
 
+function spectateNames() {
+  return spectateHostIsWhite
+    ? { white: spectateHostName, black: spectateGuestName }
+    : { white: spectateGuestName, black: spectateHostName };
+}
+
+// --- Live-game directory (host side, only when they opted in) ---
+
+function listLiveGame() {
+  registerLiveGame(currentRoomCode, {
+    hostName: getProfile().name || "Host",
+    guestName: opponentName,
+    timeControl: timeControlKey,
+  }).then((ok) => {
+    liveListed = ok;
+  });
+}
+
+function delistLiveGame() {
+  if (!liveListed) return;
+  liveListed = false;
+  unregisterLiveGame(currentRoomCode);
+}
+
+// --- Spectating someone else's game (read-only) ---
+
+function startSpectating(rawCode) {
+  const code = String(rawCode || "").trim().toUpperCase();
+  mode = "spectate";
+  myColor = "w";
+  flipped = false;
+  customStartFen = null;
+  game.reset();
+  resetTransientState();
+  spectateHostName = "Host";
+  spectateGuestName = "Guest";
+  spectateHostIsWhite = true;
+  showScreen("room");
+  el("room-heading").textContent = "Joining as a spectator…";
+  el("room-code-block").classList.add("hidden");
+  el("room-link-row").classList.add("hidden");
+  el("conn-state").textContent = "Connecting to the game…";
+  el("conn-state").classList.remove("error");
+
+  room = new Room({
+    onConnected: () => {
+      el("conn-state").textContent = "Connected — loading the game…";
+    },
+    onData: handleSpectatorData,
+    onPeerLeft: () => {
+      statusEl.textContent = "The game has ended — the host left.";
+    },
+    onError: (err) => {
+      el("conn-state").textContent =
+        err?.type === "peer-unavailable" ? "That game isn't live any more." : describeConnError(err);
+      el("conn-state").classList.add("error");
+    },
+  });
+  room.joinAsSpectator(PEER_PREFIX + code);
+}
+
+function beginSpectating() {
+  clock = new Clock("untimed", onClockTick, onClockFlag);
+  clearClockDisplay();
+  updateSideLabels();
+  el("btn-resign").classList.add("hidden");
+  el("btn-rematch").classList.add("hidden");
+  el("btn-undo").classList.add("hidden");
+  el("spectator-banner").classList.remove("hidden");
+  el("chat-card").classList.remove("hidden");
+  el("chat-form").classList.add("hidden"); // spectators can read chat, not send
+  el("chat-list").innerHTML = "";
+  showScreen("game");
+  render();
+}
+
+// Only a whitelist of message types is honored here: the host mirrors
+// everything it sees, including things meant for the opponent alone
+// (undo/rematch *requests*), which would be confusing to act on.
+function handleSpectatorData(data) {
+  switch (data.type) {
+    case "spectate-denied":
+      el("conn-state").textContent = "This game isn't open to spectators.";
+      el("conn-state").classList.add("error");
+      break;
+    case "spectate-sync": {
+      spectateHostName = data.hostName || "Host";
+      spectateGuestName = data.guestName || "Guest";
+      spectateHostIsWhite = data.hostIsWhite !== false;
+      timeControlKey = data.timeControl || "untimed";
+      customStartFen = data.startFen || null;
+      try {
+        game.loadPgn(data.pgn);
+      } catch {
+        try {
+          game.load(data.fen);
+        } catch {
+          game.reset();
+        }
+      }
+      const hist = game.history({ verbose: true });
+      lastMove = hist.length ? { from: hist[hist.length - 1].from, to: hist[hist.length - 1].to } : null;
+      beginSpectating();
+      break;
+    }
+    case "move":
+    case "undo-accept":
+      handlePeerData(data);
+      break;
+    case "resign": {
+      const who = data._from === "host" ? spectateHostName : spectateGuestName;
+      endGame(`${who} resigned.`);
+      render();
+      break;
+    }
+    case "flag": {
+      const { white, black } = spectateNames();
+      endGame(`${data.color === "w" ? black : white} wins on time.`);
+      render();
+      break;
+    }
+    case "chat":
+      appendChat(data._from === "host" ? spectateHostName : spectateGuestName, data.text);
+      break;
+    case "rematch-accept":
+      spectateHostIsWhite = !spectateHostIsWhite; // players swap colors each rematch
+      if (customStartFen) game.load(customStartFen);
+      else game.reset();
+      gameRecorded = false;
+      endText = null;
+      selected = null;
+      legalTargets = [];
+      lastMove = null;
+      updateSideLabels();
+      render();
+      break;
+  }
+}
+
 function beginOnlineGame() {
   clock = new Clock(timeControlKey, onClockTick, onClockFlag);
   clearClockDisplay();
@@ -537,6 +832,7 @@ function beginOnlineGame() {
   el("btn-rematch").textContent = "Rematch";
   el("chat-card").classList.remove("hidden");
   el("chat-list").innerHTML = "";
+  el("btn-copy-watch-game").classList.toggle("hidden", !(room && room.isHost && room.allowSpectators));
   showScreen("game");
   render();
 }
@@ -563,6 +859,7 @@ function handlePeerData(data) {
       opponentName = data.name || "Friend";
       opponentRating = typeof data.rating === "number" ? data.rating : 1200;
       updateSideLabels();
+      if (room && room.isHost && room.allowSpectators) listLiveGame();
       break;
     case "chat":
       appendChat(opponentName, data.text);
@@ -600,6 +897,8 @@ function endGame(text, outcome = null) {
   gameRecorded = true;
   if (clock) clock.stop();
   statusEl.textContent = text;
+  endText = text;
+  if (mode === "spectate") return; // watching isn't playing: no rating, no history
 
   let ratingInfo = null;
   if (mode === "online" && outcome && typeof opponentRating === "number") {
@@ -613,6 +912,7 @@ function endGame(text, outcome = null) {
     pushProfile(updatedProfile);
     ratingInfo = { before, after };
     statusEl.textContent += ` (Rating ${before} → ${after}, ${after - before >= 0 ? "+" : ""}${after - before})`;
+    endText = statusEl.textContent;
   }
 
   addHistoryEntry({
@@ -629,6 +929,7 @@ function endGame(text, outcome = null) {
   if (mode === "online") {
     el("btn-resign").classList.add("hidden");
     el("btn-rematch").classList.remove("hidden");
+    delistLiveGame(); // a finished game shouldn't still show up as live
   }
 }
 
@@ -704,7 +1005,7 @@ el("btn-rematch").addEventListener("click", () => {
     return;
   }
   if (mode === "bot") {
-    startBotGame(botDifficulty, myColor);
+    startBotGame(botElo, myColor);
     return;
   }
   if (mode === "online") {
@@ -717,7 +1018,7 @@ el("btn-rematch").addEventListener("click", () => {
 });
 
 el("btn-resign").addEventListener("click", () => {
-  if (game.isGameOver()) return;
+  if (game.isGameOver() || gameRecorded) return; // already over — don't resign twice
   if (mode === "online") {
     room.send({ type: "resign" });
     endGame("You resigned.", "loss");
@@ -882,6 +1183,54 @@ function renderProfile() {
   hideNameError();
   el("username-check-result").classList.add("hidden");
 }
+
+async function renderLiveGames() {
+  const note = el("live-games-note");
+  const list = el("live-games-list");
+  list.innerHTML = "";
+  if (!isConfigured()) {
+    note.textContent = "Add your Firebase config to see live games here — see README.";
+    note.classList.remove("hidden");
+    return;
+  }
+  note.textContent = "Loading…";
+  note.classList.remove("hidden");
+  const rows = await fetchLiveGames(30);
+  if (rows == null) {
+    note.textContent = "Couldn't load live games right now.";
+    return;
+  }
+  // Hosts remove their listing when they leave, but a closed tab can skip
+  // that cleanup — so hide anything old enough to almost certainly be dead.
+  const maxAgeMs = 3 * 60 * 60 * 1000;
+  const fresh = rows.filter((r) => {
+    const started = r.startedAt?.toMillis?.();
+    return !started || Date.now() - started < maxAgeMs;
+  });
+  if (fresh.length === 0) {
+    note.textContent =
+      "No games are being played live right now. Start one with “Let others watch” ticked and it'll show up here.";
+    return;
+  }
+  note.classList.add("hidden");
+  for (const g of fresh) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.className = "history-row";
+    const title = document.createElement("span");
+    title.className = "h-result";
+    title.textContent = `${g.hostName} vs ${g.guestName}`;
+    const meta = document.createElement("span");
+    meta.className = "h-meta";
+    meta.textContent = `${TIME_CONTROLS[g.timeControl]?.label || "Untimed"} · tap to watch live`;
+    btn.appendChild(title);
+    btn.appendChild(meta);
+    btn.addEventListener("click", () => startSpectating(g.code));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+el("btn-refresh-live").addEventListener("click", renderLiveGames);
 
 async function renderLeaderboard() {
   const note = el("leaderboard-note");
@@ -1048,6 +1397,7 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     } else if (btn.dataset.nav === "watch") {
       setNavActive("watch");
       showScreen("watch");
+      renderLiveGames();
     } else if (btn.dataset.nav === "account") {
       setNavActive("account");
       showScreen("account");
@@ -1061,17 +1411,47 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 el("btn-learn-back").addEventListener("click", goHome);
 
 el("btn-learn-play").addEventListener("click", () => {
-  startBotGame("easy", "w");
+  startBotGame(400, "w"); // a gentle level for someone just learning the rules
 });
 
-function setActiveBotDifficulty(key) {
-  botDifficulty = key;
-  document.querySelectorAll("#bot-difficulty .chip").forEach((c) => c.classList.toggle("active", c.dataset.diff === key));
+// Builds the Elo picker from bot.js's TIERS/BOTS so the list of levels only
+// has to be maintained in one place.
+function buildBotEloPicker() {
+  const container = el("bot-elo-picker");
+  container.innerHTML = "";
+  TIERS.forEach((tier) => {
+    const wrap = document.createElement("div");
+    wrap.className = "elo-tier";
+    const title = document.createElement("p");
+    title.className = "elo-tier-title";
+    title.textContent = tier.name;
+    const row = document.createElement("div");
+    row.className = "chip-row";
+    row.setAttribute("role", "radiogroup");
+    row.setAttribute("aria-label", tier.name + " bot levels");
+    tier.elos.forEach((elo) => {
+      const btn = document.createElement("button");
+      btn.className = "chip";
+      btn.dataset.elo = String(elo);
+      btn.textContent = String(elo);
+      row.appendChild(btn);
+    });
+    wrap.appendChild(title);
+    wrap.appendChild(row);
+    container.appendChild(wrap);
+  });
 }
-document.querySelectorAll("#bot-difficulty .chip").forEach((c) => {
-  c.addEventListener("click", () => setActiveBotDifficulty(c.dataset.diff));
+buildBotEloPicker();
+
+function setActiveBotElo(elo) {
+  botElo = Number(elo);
+  document.querySelectorAll("#bot-elo-picker .chip").forEach((c) => c.classList.toggle("active", Number(c.dataset.elo) === botElo));
+}
+el("bot-elo-picker").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (chip) setActiveBotElo(chip.dataset.elo);
 });
-setActiveBotDifficulty("medium");
+setActiveBotElo(1000);
 
 function setActiveBotColor(key) {
   botColorChoice = key;
@@ -1084,13 +1464,14 @@ setActiveBotColor("w");
 
 el("btn-play-bot").addEventListener("click", () => {
   const color = botColorChoice === "random" ? (Math.random() < 0.5 ? "w" : "b") : botColorChoice;
-  startBotGame(botDifficulty, color);
+  startBotGame(botElo, color);
 });
 
-function startBotGame(difficulty, humanColor) {
+function startBotGame(elo, humanColor) {
   mode = "bot";
   myColor = humanColor;
-  botDifficulty = difficulty;
+  botElo = Number(elo);
+  setActiveBotElo(botElo);
   game.reset();
   flipped = humanColor === "b";
   resetTransientState();
@@ -1152,7 +1533,10 @@ function openReplay(entry) {
   const temp = new Chess();
   temp.loadPgn(entry.pgn);
   const moves = temp.history({ verbose: true });
-  const stepper = new Chess();
+  // Games that began from a custom position start from that FEN, not the
+  // standard setup — replaying from the standard start would be illegal.
+  const startFen = temp.header().FEN;
+  const stepper = startFen ? new Chess(startFen) : new Chess();
   const fens = [stepper.fen()];
   for (const m of moves) {
     stepper.move({ from: m.from, to: m.to, promotion: m.promotion });
@@ -1184,7 +1568,7 @@ el("btn-replay-back").addEventListener("click", goHome);
 // ---------- Navigation ----------
 
 function goHome() {
-  if (mode && viewState === "game" && !game.isGameOver()) {
+  if (mode && mode !== "spectate" && viewState === "game" && !game.isGameOver()) {
     const messages = {
       local: "Leave this game? It'll be saved so you can resume from Home.",
       bot: "Leave this game? Your progress against the bot won't be saved.",
@@ -1195,9 +1579,10 @@ function goHome() {
   if (mode === "local" && !game.isGameOver()) {
     saveLocalProgress();
   }
-  if (mode === "online" && room) {
+  if ((mode === "online" || mode === "spectate") && room) {
     room.close();
   }
+  delistLiveGame();
   mode = null;
   room = null;
   if (clock) clock.stop();
@@ -1211,7 +1596,48 @@ el("btn-home").addEventListener("click", goHome);
 el("btn-cancel-room").addEventListener("click", goHome);
 
 el("btn-local").addEventListener("click", startLocal);
-el("btn-create").addEventListener("click", startOnlineAsHost);
+el("btn-create").addEventListener("click", () => {
+  if (el("custom-position-toggle").checked) startPositionSetup();
+  else startOnlineAsHost();
+});
+
+// ---------- Custom position editor (remove pieces before a friend game) ----------
+
+function startPositionSetup() {
+  mode = null;
+  game.reset();
+  selected = null;
+  legalTargets = [];
+  lastMove = null;
+  flipped = false;
+  showScreen("setup");
+  render();
+}
+
+function onSetupSquareClick(square) {
+  const piece = game.get(square);
+  if (!piece || piece.type === "k") return; // both sides always keep their king
+  game.remove(square);
+  render();
+}
+
+el("btn-setup-reset").addEventListener("click", () => {
+  game.reset();
+  render();
+});
+el("btn-setup-clear").addEventListener("click", () => {
+  for (const file of "abcdefgh") {
+    for (let rank = 1; rank <= 8; rank++) {
+      const sq = file + rank;
+      const piece = game.get(sq);
+      if (piece && piece.type !== "k") game.remove(sq);
+    }
+  }
+  render();
+});
+el("btn-setup-start").addEventListener("click", () => startOnlineAsHost(game.fen()));
+el("btn-setup-cancel").addEventListener("click", goHome);
+
 
 async function copyFromInput(inputEl, btnEl) {
   inputEl.select();
@@ -1245,7 +1671,7 @@ updateSoundButton();
 // ---------- Recovering from backgrounding the tab ----------
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState !== "visible" || mode !== "online" || !room) return;
+  if (document.visibilityState !== "visible" || (mode !== "online" && mode !== "spectate") || !room) return;
   room.reconnectIfNeeded();
   if (viewState === "room" && !el("conn-state").classList.contains("error")) {
     el("conn-state").textContent = "Reconnecting…";
@@ -1317,12 +1743,54 @@ if (isIos() && !isStandalone() && !localStorage.getItem("oakwood.installDismisse
   el("install-banner").classList.remove("hidden");
 }
 
+// ---------- Share the app ----------
+
+el("btn-share-app").addEventListener("click", async () => {
+  const url = location.origin + location.pathname; // the app itself, not a room link
+  const note = el("share-note");
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "Oakwood Chess", text: "Come play chess with me on Oakwood Chess.", url });
+      return;
+    }
+  } catch (err) {
+    if (err && err.name === "AbortError") return; // they just closed the share sheet
+    // anything else: fall through to copying the link instead
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    note.textContent = "Link copied — paste it anywhere to share.";
+  } catch {
+    note.textContent = url;
+  }
+  note.classList.remove("hidden");
+  setTimeout(() => note.classList.add("hidden"), 4000);
+});
+
+el("btn-copy-watch-game").addEventListener("click", async () => {
+  const url = `${location.origin}${location.pathname}?watch=${currentRoomCode}`;
+  const btn = el("btn-copy-watch-game");
+  try {
+    await navigator.clipboard.writeText(url);
+    btn.textContent = "Copied!";
+  } catch {
+    btn.textContent = url; // clipboard blocked: show the link so it can be copied by hand
+  }
+  setTimeout(() => (btn.textContent = "Copy watch link"), 2500);
+});
+
+// Best-effort cleanup if the host just closes the tab mid-game.
+window.addEventListener("pagehide", () => delistLiveGame());
+
 // ---------- Boot ----------
 
 const params = new URLSearchParams(location.search);
 const joinId = params.get("join");
+const watchId = params.get("watch");
 if (joinId) {
   startOnlineAsGuest(joinId);
+} else if (watchId) {
+  startSpectating(watchId);
 } else {
   showScreen("home");
   renderResumeBanner();

@@ -324,3 +324,58 @@ export async function fetchLeaderboard(max = 20) {
     return null;
   }
 }
+
+// --- Live games directory (for the Watch tab's spectator list) ---
+//
+// This is deliberately a thin "presence" list, not a game-state relay:
+// Firestore only ever stores who's playing and the room code. The actual
+// moves still travel peer-to-peer once a spectator connects — Firestore
+// just helps them find the room in the first place, the same job PeerJS's
+// broker does for the two players.
+
+export async function registerLiveGame(code, info) {
+  await ready();
+  if (!state) return false;
+  try {
+    const { doc, setDoc, serverTimestamp } = state.store;
+    await setDoc(doc(state.db, "liveGames", code), {
+      hostName: (info.hostName || "Someone").slice(0, 24),
+      guestName: (info.guestName || "Someone").slice(0, 24),
+      timeControl: info.timeControl || "untimed",
+      // Lets the security rules restrict changes/deletes to this listing's
+      // own host, so nobody else can wipe or overwrite it.
+      hostUid: state.auth.currentUser.uid,
+      startedAt: serverTimestamp(),
+    });
+    return true;
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't list this game as live.", err);
+    return false;
+  }
+}
+
+export async function unregisterLiveGame(code) {
+  await ready();
+  if (!state) return;
+  try {
+    const { doc, deleteDoc } = state.store;
+    await deleteDoc(doc(state.db, "liveGames", code));
+  } catch {
+    /* best-effort cleanup — a stale entry will just look like a dead room
+       to a spectator, who gets a normal "room not open" message */
+  }
+}
+
+export async function fetchLiveGames(max = 20) {
+  await ready();
+  if (!state) return null;
+  try {
+    const { collection, query, orderBy, limit, getDocs } = state.store;
+    const q = query(collection(state.db, "liveGames"), orderBy("startedAt", "desc"), limit(max));
+    const snap = await getDocs(q);
+    return snap.docs.map((d) => ({ code: d.id, ...d.data() }));
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't load live games.", err);
+    return null;
+  }
+}

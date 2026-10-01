@@ -188,6 +188,49 @@ body {
 }
 .chip.active { border-color: var(--accent); color: var(--accent-bright); background: rgba(139,191,90,0.12); }
 
+.checkbox-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: var(--parchment-dim);
+  cursor: pointer;
+}
+.checkbox-row input { margin-top: 3px; flex-shrink: 0; }
+
+.elo-tier { margin-bottom: 10px; }
+.elo-tier-title {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--parchment-dim);
+  margin: 0 0 6px;
+}
+.elo-tier .chip-row { margin-bottom: 0; }
+
+.captured-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 6px 0 4px;
+  min-height: 22px;
+}
+.captured-tray {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px;
+  flex: 1;
+}
+.captured-tray .cap-piece { width: 16px; height: 16px; opacity: 0.9; margin-right: -4px; }
+.captured-tray .cap-adv {
+  margin-left: 6px;
+  font-size: 0.75rem;
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+
 .link-row { display: flex; gap: 8px; margin-bottom: 10px; }
 #room-link {
   flex: 1; background: var(--ink); border: 1px solid var(--panel-line); border-radius: 6px;
@@ -221,6 +264,16 @@ body {
 }
 .move-list li { color: var(--parchment-dim); }
 .move-list li b { color: var(--parchment); font-weight: 500; }
+.move-list .mv { display: inline-flex; align-items: center; gap: 2px; margin-right: 8px; }
+.move-list .mv-icon { width: 15px; height: 15px; flex-shrink: 0; vertical-align: -3px; }
+/* The most recent move stands out, so it's obvious what just happened. */
+.move-list .mv.current {
+  background: rgba(255, 221, 87, 0.22);
+  color: var(--parchment);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: -4px;
+}
 
 .controls { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 
@@ -325,23 +378,38 @@ body {
 
 .foot { text-align: center; margin-top: 30px; color: var(--parchment-dim); font-size: 0.78rem; opacity: 0.7; }
 .foot p { margin: 0; }
+.foot { opacity: 1; }
+.foot p { opacity: 0.7; }
+
+/* Credits: both logos shown at a readable size on white badges (the
+   artwork has a white background, so a badge makes that look intentional
+   against the dark theme). */
 .credits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 22px;
+  margin-bottom: 18px;
+}
+.credit { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.credit-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--parchment-dim);
+}
+.credit-badge {
+  background: #fff;
+  border-radius: 12px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 0.8rem;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.3);
 }
-.credit-logo {
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
-  background: #fff;
-  padding: 2px;
-  flex-shrink: 0;
-}
-
+.credit-logo { height: 84px; width: auto; display: block; }
+.credit-logo-wide { height: 60px; }
 @media (max-width: 899px) {
   .table { flex-direction: column; align-items: center; }
   .panel { width: 100%; max-width: 480px; }

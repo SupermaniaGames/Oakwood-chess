@@ -248,12 +248,11 @@
           <div class="card">
             <h2>Play vs Computer</h2>
             <p class="muted">Practice offline — no opponent required.</p>
-            <div id="bot-difficulty" class="chip-row" role="radiogroup" aria-label="Bot difficulty">
-              <button class="chip" data-diff="easy">Easy</button>
-              <button class="chip" data-diff="medium">Medium</button>
-              <button class="chip" data-diff="hard">Hard</button>
+            <div id="bot-elo-picker">
+              <!-- filled in by JS from bot.js's TIERS/BOTS, so the list of
+                   levels only has to be maintained in one place -->
             </div>
-            <div id="bot-color" class="chip-row" role="radiogroup" aria-label="Play as">
+            <div id="bot-color" class="chip-row" role="radiogroup" aria-label="Play as" style="margin-top:6px;">
               <button class="chip" data-color="w">Play as White</button>
               <button class="chip" data-color="b">Play as Black</button>
               <button class="chip" data-color="random">Random</button>
@@ -282,6 +281,14 @@
             <button id="btn-local" class="btn btn-primary">Play locally, one board two players</button>
             <div class="divider"><span>or</span></div>
             <button id="btn-create" class="btn btn-ghost">Create a room for a friend</button>
+            <label class="checkbox-row">
+              <input type="checkbox" id="custom-position-toggle" />
+              <span>Set up a custom position first (remove pieces — for practicing specific positions with a friend)</span>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" id="allow-spectators-toggle" />
+              <span>Let others watch this game live (listed in the Watch tab)</span>
+            </label>
           </div>
 
           <div class="card">
@@ -294,10 +301,31 @@
             <p id="join-error" class="conn-state error hidden"></p>
           </div>
 
+          <div class="card">
+            <h2>Share Oakwood Chess</h2>
+            <p class="muted">Know someone who'd enjoy a game? Send them the app.</p>
+            <button id="btn-share-app" class="btn btn-ghost">Share</button>
+            <p id="share-note" class="conn-state success hidden" style="margin:8px 0 0;"></p>
+          </div>
+
           <div class="card card-wide">
             <h2>History</h2>
             <p class="muted" id="history-empty">No finished games yet.</p>
             <ol id="history-list" class="history-list"></ol>
+          </div>
+        </div>
+
+        <!-- CUSTOM POSITION EDITOR -->
+        <div id="screen-setup" class="screen hidden">
+          <div class="card">
+            <h2>Set up a position</h2>
+            <p class="muted">Tap a piece to remove it. Kings can't be removed. White moves first once the room starts; castling rights are worked out automatically from what's left on the board.</p>
+            <div class="controls">
+              <button id="btn-setup-reset" class="btn btn-ghost btn-small">Reset to start</button>
+              <button id="btn-setup-clear" class="btn btn-ghost btn-small">Clear pawns &amp; pieces</button>
+            </div>
+            <button id="btn-setup-start" class="btn btn-primary" style="margin-top:14px;">Create room with this position</button>
+            <button id="btn-setup-cancel" class="btn btn-ghost btn-small" style="margin-top:8px;">Cancel</button>
           </div>
         </div>
 
@@ -336,6 +364,17 @@
                 <span class="side-label" id="them-label">Black</span>
                 <span class="side-clock" id="clock-them"></span>
               </div>
+            </div>
+            <div class="captured-row">
+              <div id="captured-you" class="captured-tray"></div>
+              <div id="captured-them" class="captured-tray"></div>
+            </div>
+
+            <p id="watchers-note" class="muted hidden" style="margin:4px 0 0;">👀 <span id="watchers-count">0</span> watching</p>
+            <button id="btn-copy-watch-game" class="btn btn-ghost btn-small hidden" style="margin-top:6px;">Copy watch link</button>
+
+            <div id="spectator-banner" class="request-banner hidden">
+              <p>👀 You're watching this game live — moves update automatically.</p>
             </div>
 
             <div id="request-banner" class="request-banner hidden">
@@ -486,7 +525,14 @@
         <!-- WATCH -->
         <div id="screen-watch" class="screen hidden">
           <div class="card card-wide">
-            <h2>Watch chess</h2>
+            <h2>Live at Oakwood Chess</h2>
+            <p class="muted" id="live-games-note">Add your Firebase config to see live games here — see README.</p>
+            <ol id="live-games-list" class="history-list"></ol>
+            <button id="btn-refresh-live" class="btn btn-ghost btn-small" style="margin-top:10px;">Refresh</button>
+          </div>
+
+          <div class="card card-wide">
+            <h2>Watch elsewhere</h2>
             <p class="muted">A few good places to watch live games and broadcasts. These open in a new tab.</p>
           </div>
           <a class="card card-wide link-card" href="https://www.chess.com/events" target="_blank" rel="noopener noreferrer">
@@ -545,10 +591,16 @@
       </button>
     </nav>
 
-    <footer class="foot">
+    <footer class="foot" id="app-footer">
       <div class="credits">
-        <img src="icons/credits/boring-games.png" alt="Boring Games" class="credit-logo" />
-        <span>Produced by Boring Games · Made by Supermania Games</span>
+        <div class="credit">
+          <span class="credit-label">Made by</span>
+          <span class="credit-badge"><img src="icons/credits/supermania-games.png" alt="Supermania Games" class="credit-logo credit-logo-wide" /></span>
+        </div>
+        <div class="credit">
+          <span class="credit-label">Produced by</span>
+          <span class="credit-badge"><img src="icons/credits/boring-games.png" alt="Boring Games" class="credit-logo" /></span>
+        </div>
       </div>
       <p>Runs entirely in the browser &mdash; games are saved only on this device.</p>
     </footer>
