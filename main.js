@@ -26,6 +26,10 @@ import {
   registerLiveGame,
   unregisterLiveGame,
   fetchLiveGames,
+  registerOpenGame,
+  unregisterOpenGame,
+  fetchOpenGames,
+  getFirestoreErrorCode,
 } from "./leaderboard.js";
 import { chooseBotMove, TIERS } from "./bot.js";
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
@@ -97,11 +101,24 @@ let spectateGuestName = "Guest";
 let customStartFen = null; // FEN both players started from (null = standard)
 let spectateHostIsWhite = true;
 let liveListed = false; // host only: is this game in the Watch directory?
+let lobbyListed = false; // host only: is this room listed in the Online lobby?
+let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "local"
+let reviewPly = null; // null = the live position; a number = browsing earlier moves
+let reviewLastMove = null;
+let guardActive = false; // is our extra browser-history entry in place?
+let ignorePop = false;
+const reviewGame = new Chess(); // scratch board used while browsing history
 
 // ---------- Screen management ----------
 
+function setRematchLabel(text) {
+  el("rematch-label").textContent = text;
+}
+
 function showScreen(name) {
   viewState = name;
+  document.body.dataset.screen = name; // lets CSS adapt the layout per screen
+  if (name !== "game") exitReview();
   ["home", "room", "setup", "game", "replay", "learn", "account", "watch"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
@@ -111,12 +128,43 @@ function showScreen(name) {
   // Credits and the "runs in your browser" note belong on the home page
   // only — during play they just take up space.
   el("app-footer").classList.toggle("hidden", name !== "home");
+  syncHistoryGuard(name);
 }
 
 // ---------- Rendering ----------
 
 function activeGame() {
-  return viewState === "replay" ? replayGame : game;
+  if (viewState === "replay") return replayGame;
+  if (viewState === "game" && reviewPly !== null) return reviewGame;
+  return game;
+}
+
+// --- Browsing earlier moves (the ‹ › arrows / tapping a move) ---
+
+function exitReview() {
+  reviewPly = null;
+  reviewLastMove = null;
+}
+
+function goToPly(ply) {
+  const history = game.history({ verbose: true });
+  if (ply >= history.length) {
+    exitReview();
+    render();
+    return;
+  }
+  ply = Math.max(0, ply);
+  const startFen = game.header().FEN; // set when the game began from a custom position
+  if (startFen) reviewGame.load(startFen);
+  else reviewGame.reset();
+  for (let i = 0; i < ply; i++) {
+    reviewGame.move({ from: history[i].from, to: history[i].to, promotion: history[i].promotion });
+  }
+  reviewPly = ply;
+  reviewLastMove = ply > 0 ? { from: history[ply - 1].from, to: history[ply - 1].to } : null;
+  selected = null;
+  legalTargets = [];
+  render();
 }
 
 function render() {
@@ -150,6 +198,20 @@ function renderBoard() {
       if (cell) {
         sq.appendChild(pieceElement(cell.color, cell.type));
       }
+      // Rank numbers down the left edge, file letters along the bottom,
+      // drawn inside the squares in small type (chess.com / lichess style).
+      if (c === 0) {
+        const rk = document.createElement("span");
+        rk.className = "coord rank";
+        rk.textContent = String(rankIndex + 1);
+        sq.appendChild(rk);
+      }
+      if (r === 7) {
+        const fl = document.createElement("span");
+        fl.className = "coord file";
+        fl.textContent = "abcdefgh"[fileIndex];
+        sq.appendChild(fl);
+      }
 
       if (viewState === "game") {
         if (selected === square) sq.classList.add("selected");
@@ -163,7 +225,8 @@ function renderBoard() {
         sq.addEventListener("click", () => onSetupSquareClick(square));
       }
 
-      if (lastMove && (lastMove.from === square || lastMove.to === square)) {
+      const lm = viewState === "game" && reviewPly !== null ? reviewLastMove : lastMove;
+      if (lm && (lm.from === square || lm.to === square)) {
         sq.classList.add("last-move");
       }
       if (cell && cell.type === "k" && cell.color === g.turn() && g.inCheck()) {
@@ -186,14 +249,16 @@ function svgIcon(color, type, className) {
 function renderMoveList() {
   const list = el("move-list");
   const history = game.history({ verbose: true });
+  const shownPly = reviewPly !== null ? reviewPly : history.length; // ply currently on the board
   list.innerHTML = "";
 
   // One <span class="mv"> per half-move: piece icon + the rest of the SAN
   // ("Nf6" -> [knight icon] "f6"). Pawn moves and castling have no piece
   // letter to swap out, so they stay plain text.
-  const moveSpan = (m, isCurrent) => {
+  const moveSpan = (m, ply) => {
     const span = document.createElement("span");
-    span.className = "mv" + (isCurrent ? " current" : "");
+    span.className = "mv" + (ply === shownPly ? " current" : "");
+    span.dataset.ply = String(ply);
     const isCastle = m.san.startsWith("O-O");
     if (m.piece !== "p" && !isCastle) {
       span.appendChild(svgIcon(m.color, m.piece, "mv-icon"));
@@ -210,12 +275,36 @@ function renderMoveList() {
     num.textContent = `${i / 2 + 1}.`;
     li.appendChild(num);
     li.appendChild(document.createTextNode(" "));
-    li.appendChild(moveSpan(history[i], i === history.length - 1));
-    if (history[i + 1]) li.appendChild(moveSpan(history[i + 1], i + 1 === history.length - 1));
+    li.appendChild(moveSpan(history[i], i + 1));
+    if (history[i + 1]) li.appendChild(moveSpan(history[i + 1], i + 2));
     list.appendChild(li);
   }
-  list.scrollTop = list.scrollHeight;
+
+  // Keep the current move in view (sideways on a phone, down on desktop).
+  const cur = list.querySelector(".mv.current");
+  if (cur) {
+    list.scrollLeft = cur.offsetLeft - list.clientWidth / 2 + cur.offsetWidth / 2;
+    list.scrollTop = cur.offsetTop - list.clientHeight / 2 + cur.offsetHeight / 2;
+  } else {
+    list.scrollLeft = 0;
+    list.scrollTop = 0;
+  }
+  el("btn-mv-prev").disabled = shownPly <= 0;
+  el("btn-mv-next").disabled = reviewPly === null;
 }
+
+el("move-list").addEventListener("click", (e) => {
+  const mv = e.target.closest(".mv");
+  if (mv && viewState === "game") goToPly(Number(mv.dataset.ply));
+});
+el("btn-mv-prev").addEventListener("click", () => {
+  const n = game.history().length;
+  if (n) goToPly((reviewPly === null ? n : reviewPly) - 1);
+});
+el("btn-mv-next").addEventListener("click", () => {
+  const n = game.history().length;
+  if (n && reviewPly !== null) goToPly(reviewPly + 1);
+});
 
 // Pieces each side has captured, plus a material-advantage number next to
 // whoever is ahead (standard chess UI). Derived from move history, so it
@@ -252,6 +341,10 @@ function renderCapturedTray() {
 function renderStatus() {
   if (viewState === "setup") {
     statusEl.textContent = "Tap a piece to remove it.";
+    return;
+  }
+  if (viewState === "game" && reviewPly !== null) {
+    statusEl.textContent = "Browsing moves — tap › to return to the live game";
     return;
   }
   if (gameRecorded && endText) {
@@ -337,7 +430,7 @@ function onClockFlag(color) {
 
 function onSquareClick(square) {
   if (viewState !== "game" || !mode || mode === "spectate") return;
-  if (game.isGameOver() || gameRecorded) return;
+  if (game.isGameOver() || gameRecorded || reviewPly !== null) return;
   if ((mode === "online" || mode === "bot") && game.turn() !== myColor) return;
 
   if (selected) {
@@ -386,6 +479,7 @@ function playMoveSound(move) {
 function applyMove({ from, to, promotion }) {
   const move = game.move({ from, to, promotion });
   if (!move) return null;
+  exitReview();
   lastMove = { from, to };
   playMoveSound(move);
   if (clock) clock.switchTo(game.turn());
@@ -409,6 +503,7 @@ function maybeTriggerBotMove() {
     if (!botMove) return;
     const applied = game.move(botMove);
     if (applied) {
+      exitReview();
       lastMove = { from: applied.from, to: applied.to };
       playMoveSound(applied);
       if (clock) clock.switchTo(game.turn());
@@ -430,16 +525,18 @@ el("promo-modal").addEventListener("click", (e) => {
 function applyLocalUndo() {
   const undone = game.undo();
   if (!undone) return;
+  exitReview();
   const hist = game.history({ verbose: true });
   lastMove = hist.length ? { from: hist[hist.length - 1].from, to: hist[hist.length - 1].to } : null;
   selected = null;
   legalTargets = [];
-  if (clock) clock.switchTo(game.turn());
+  if (clock) clock.switchTo(game.turn(), { increment: false }); // taking a move back shouldn't pay an increment
   if (mode === "local") saveLocalProgress();
   render();
 }
 
 function applyRematch() {
+  exitReview();
   if (customStartFen) game.load(customStartFen);
   else game.reset();
   gameRecorded = false;
@@ -468,6 +565,7 @@ function resetTransientState() {
   selected = null;
   legalTargets = [];
   lastMove = null;
+  exitReview();
   gameRecorded = false;
   endText = null;
   outgoingRequest = null;
@@ -481,6 +579,7 @@ function resetTransientState() {
   el("chat-form").classList.remove("hidden");
   el("watchers-note").classList.add("hidden");
   el("btn-copy-watch-game").classList.add("hidden");
+  el("listing-warning").classList.add("hidden");
 }
 
 function startLocal() {
@@ -495,7 +594,7 @@ function startLocal() {
   updateSideLabels();
   el("btn-resign").classList.add("hidden");
   el("btn-rematch").classList.remove("hidden");
-  el("btn-rematch").textContent = "New game";
+  setRematchLabel("New game");
   el("chat-card").classList.add("hidden");
   showScreen("game");
   render();
@@ -524,7 +623,7 @@ function resumeLocalGame() {
   updateSideLabels();
   el("btn-resign").classList.add("hidden");
   el("btn-rematch").classList.remove("hidden");
-  el("btn-rematch").textContent = "New game";
+  setRematchLabel("New game");
   el("chat-card").classList.add("hidden");
   showScreen("game");
   render();
@@ -540,7 +639,7 @@ function saveLocalProgress() {
   });
 }
 
-function startOnlineAsHost(customFen = null) {
+function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
   mode = "online";
   myColor = "w";
   customStartFen = customFen;
@@ -560,7 +659,8 @@ function startOnlineAsHost(customFen = null) {
   resetTransientState();
   showScreen("room");
   el("room-heading").textContent = "Room ready";
-  el("room-sub").textContent = "Give your friend the code, or send the link — either one works.";
+  const tcLabel = TIME_CONTROLS[timeControlKey]?.label || "Untimed";
+  el("room-sub").textContent = `${tcLabel} game. Give your friend the code, or send the link — either one works.`;
   el("room-code-block").classList.remove("hidden");
   el("room-link-row").classList.remove("hidden");
   el("conn-state").textContent = "Waiting for your friend to join…";
@@ -571,8 +671,22 @@ function startOnlineAsHost(customFen = null) {
     onOpen: () => {
       el("room-code").value = currentRoomCode;
       el("room-link").value = `${location.origin}${location.pathname}?join=${currentRoomCode}`;
+      if (listInLobby) {
+        el("room-sub").textContent = "You're listed under Online → Open games. The game starts as soon as someone joins.";
+        registerOpenGame(currentRoomCode, {
+          hostName: getProfile().name || "Player",
+          rating: getProfile().rating,
+          timeControl: timeControlKey,
+        }).then((ok) => {
+          lobbyListed = ok;
+          if (!ok) {
+            el("conn-state").textContent = "Couldn't list this room in the lobby — share the code or link instead.";
+          }
+        });
+      }
     },
     onConnected: () => {
+      delistOpenGame(); // someone joined: it's no longer an open game
       const profile = getProfile();
       room.send({
         type: "init",
@@ -698,6 +812,16 @@ function listLiveGame() {
     timeControl: timeControlKey,
   }).then((ok) => {
     liveListed = ok;
+    const warn = el("listing-warning");
+    if (ok) {
+      warn.classList.add("hidden");
+      return;
+    }
+    warn.textContent =
+      getFirestoreErrorCode("liveWrite") === "permission-denied"
+        ? "⚠ This game couldn't be listed in the Watch tab: your Firestore rules don't allow the liveGames collection yet (see README). Your watch link still works."
+        : "⚠ This game couldn't be listed in the Watch tab right now. Your watch link still works.";
+    warn.classList.remove("hidden");
   });
 }
 
@@ -785,6 +909,7 @@ function handleSpectatorData(data) {
       }
       const hist = game.history({ verbose: true });
       lastMove = hist.length ? { from: hist[hist.length - 1].from, to: hist[hist.length - 1].to } : null;
+      exitReview();
       beginSpectating();
       break;
     }
@@ -829,7 +954,7 @@ function beginOnlineGame() {
   updateSideLabels();
   el("btn-resign").classList.remove("hidden");
   el("btn-rematch").classList.add("hidden");
-  el("btn-rematch").textContent = "Rematch";
+  setRematchLabel("Rematch");
   el("chat-card").classList.remove("hidden");
   el("chat-list").innerHTML = "";
   el("btn-copy-watch-game").classList.toggle("hidden", !(room && room.isHost && room.allowSpectators));
@@ -841,6 +966,8 @@ function handlePeerData(data) {
   switch (data.type) {
     case "move": {
       const applied = game.move({ from: data.from, to: data.to, promotion: data.promotion });
+      // A spectator browsing earlier moves keeps their place; players snap back to live.
+      if (mode !== "spectate") exitReview();
       lastMove = { from: data.from, to: data.to };
       if (applied) playMoveSound(applied);
       if (clock) clock.switchTo(game.turn());
@@ -1056,6 +1183,7 @@ function setActiveChip(key) {
   document.querySelectorAll("#time-control .chip").forEach((c) => {
     c.classList.toggle("active", c.dataset.tc === key);
   });
+  updatePlaySummary();
 }
 
 document.querySelectorAll("#time-control .chip").forEach((c) => {
@@ -1197,7 +1325,10 @@ async function renderLiveGames() {
   note.classList.remove("hidden");
   const rows = await fetchLiveGames(30);
   if (rows == null) {
-    note.textContent = "Couldn't load live games right now.";
+    note.textContent =
+      getFirestoreErrorCode("live") === "permission-denied"
+        ? "Live games aren't enabled in your database yet — add the liveGames rule from the README, then refresh."
+        : "Couldn't load live games right now.";
     return;
   }
   // Hosts remove their listing when they leave, but a closed tab can skip
@@ -1415,37 +1546,39 @@ el("btn-learn-play").addEventListener("click", () => {
 });
 
 // Builds the Elo picker from bot.js's TIERS/BOTS so the list of levels only
-// has to be maintained in one place.
+// has to be maintained in one place. One scrollable row, tiers divided by a
+// thin line (Beginner | Intermediate | Advanced).
 function buildBotEloPicker() {
   const container = el("bot-elo-picker");
   container.innerHTML = "";
-  TIERS.forEach((tier) => {
-    const wrap = document.createElement("div");
-    wrap.className = "elo-tier";
-    const title = document.createElement("p");
-    title.className = "elo-tier-title";
-    title.textContent = tier.name;
-    const row = document.createElement("div");
-    row.className = "chip-row";
-    row.setAttribute("role", "radiogroup");
-    row.setAttribute("aria-label", tier.name + " bot levels");
+  TIERS.forEach((tier, i) => {
+    if (i > 0) {
+      const sep = document.createElement("span");
+      sep.className = "elo-sep";
+      container.appendChild(sep);
+    }
     tier.elos.forEach((elo) => {
       const btn = document.createElement("button");
       btn.className = "chip";
       btn.dataset.elo = String(elo);
       btn.textContent = String(elo);
-      row.appendChild(btn);
+      container.appendChild(btn);
     });
-    wrap.appendChild(title);
-    wrap.appendChild(row);
-    container.appendChild(wrap);
   });
 }
 buildBotEloPicker();
 
+function centerActiveElo() {
+  const row = el("bot-elo-picker");
+  const active = row.querySelector(".chip.active");
+  if (active) row.scrollLeft = active.offsetLeft - row.clientWidth / 2 + active.offsetWidth / 2;
+}
+
 function setActiveBotElo(elo) {
   botElo = Number(elo);
   document.querySelectorAll("#bot-elo-picker .chip").forEach((c) => c.classList.toggle("active", Number(c.dataset.elo) === botElo));
+  centerActiveElo();
+  updatePlaySummary();
 }
 el("bot-elo-picker").addEventListener("click", (e) => {
   const chip = e.target.closest(".chip");
@@ -1456,16 +1589,133 @@ setActiveBotElo(1000);
 function setActiveBotColor(key) {
   botColorChoice = key;
   document.querySelectorAll("#bot-color .chip").forEach((c) => c.classList.toggle("active", c.dataset.color === key));
+  updatePlaySummary();
 }
 document.querySelectorAll("#bot-color .chip").forEach((c) => {
   c.addEventListener("click", () => setActiveBotColor(c.dataset.color));
 });
 setActiveBotColor("w");
 
-el("btn-play-bot").addEventListener("click", () => {
-  const color = botColorChoice === "random" ? (Math.random() < 0.5 ? "w" : "b") : botColorChoice;
-  startBotGame(botElo, color);
+// The one Play button starts whichever mode is selected, and its second
+// line always says exactly what that will be.
+function updatePlaySummary() {
+  const tc = TIME_CONTROLS[timeControlKey]?.label || "Untimed";
+  const colorLabel = botColorChoice === "w" ? "White" : botColorChoice === "b" ? "Black" : "Random";
+  let text;
+  if (homeMode === "bot") text = `vs Computer · ${botElo} · ${colorLabel}`;
+  else if (homeMode === "local") text = `Local · ${tc}`;
+  else text = isConfigured() ? `Online · ${tc}` : "Needs the shared database — see README";
+  el("play-summary").textContent = text;
+  el("btn-main-play").disabled = homeMode === "online" && !isConfigured();
+  el("btn-create").textContent = `Create a room for a friend · ${tc}`;
+}
+
+function setHomeMode(m) {
+  if (!["online", "bot", "local"].includes(m)) m = "bot";
+  homeMode = m;
+  localStorage.setItem("oakwood.homeMode", m);
+  document.querySelectorAll("#mode-switch button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
+  el("panel-bot").classList.toggle("hidden", m !== "bot");
+  el("panel-local").classList.toggle("hidden", m !== "local");
+  el("panel-online").classList.toggle("hidden", m !== "online");
+  el("tc-section").classList.toggle("hidden", m === "bot"); // time control is for local/online
+  updatePlaySummary();
+  if (m === "bot") centerActiveElo();
+  if (m === "online") renderOpenGames();
+}
+document.querySelectorAll("#mode-switch button").forEach((b) => {
+  b.addEventListener("click", () => setHomeMode(b.dataset.mode));
 });
+if (!isConfigured()) document.querySelector('#mode-switch [data-mode="online"]').textContent = "🔒 Online";
+
+el("btn-main-play").addEventListener("click", () => {
+  if (homeMode === "bot") {
+    const color = botColorChoice === "random" ? (Math.random() < 0.5 ? "w" : "b") : botColorChoice;
+    startBotGame(botElo, color);
+  } else if (homeMode === "local") {
+    startLocal();
+  } else {
+    quickPlay();
+  }
+});
+
+// ---------- Online lobby (needs Firebase) ----------
+// A game is only ever a room two browsers share; Firestore just remembers
+// "this room is open and waiting" so strangers can find each other.
+
+function openGameFresh(g) {
+  const created = g.createdAt?.toMillis?.();
+  return !created || Date.now() - created < 5 * 60 * 1000; // older listings are almost surely abandoned
+}
+
+function delistOpenGame() {
+  if (!lobbyListed) return;
+  lobbyListed = false;
+  unregisterOpenGame(currentRoomCode);
+}
+
+// Join the longest-waiting game for this time control, or open one and wait.
+async function quickPlay() {
+  el("btn-main-play").disabled = true;
+  el("play-summary").textContent = "Looking for a game…";
+  const rows = await fetchOpenGames(30);
+  if (rows == null) {
+    updatePlaySummary();
+    el("open-games-note").textContent =
+      getFirestoreErrorCode("open") === "permission-denied"
+        ? "The lobby isn't enabled in your database yet — add the openGames rule from the README."
+        : "Couldn't reach the lobby right now — check your connection and try again.";
+    return;
+  }
+  updatePlaySummary();
+  const me = getCurrentUser()?.uid;
+  const match = rows.find((g) => g.hostUid !== me && g.timeControl === timeControlKey && openGameFresh(g));
+  if (match) startOnlineAsGuest(match.code);
+  else startOnlineAsHost(null, { listInLobby: true });
+}
+
+async function renderOpenGames() {
+  const note = el("open-games-note");
+  const list = el("open-games-list");
+  list.innerHTML = "";
+  if (!isConfigured()) {
+    note.textContent =
+      "Playing other people online needs the shared database (Firebase) — see the README. You can still play a friend with a room code under Local / Friend.";
+    return;
+  }
+  note.textContent = "Press Play to join the longest-waiting game for your time control, or to open one and wait. You can also pick a game below.";
+  const rows = await fetchOpenGames(30);
+  if (rows == null) {
+    note.textContent =
+      getFirestoreErrorCode("open") === "permission-denied"
+        ? "The lobby isn't enabled in your database yet — add the openGames rule from the README, then refresh."
+        : "Couldn't load open games right now.";
+    return;
+  }
+  const me = getCurrentUser()?.uid;
+  const open = rows.filter((g) => g.hostUid !== me && openGameFresh(g));
+  if (open.length === 0) {
+    note.textContent += " No open games right now.";
+    return;
+  }
+  for (const g of open) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.className = "history-row";
+    const title = document.createElement("span");
+    title.className = "h-result";
+    title.textContent = `${g.hostName} (${g.rating})`;
+    const meta = document.createElement("span");
+    meta.className = "h-meta";
+    meta.textContent = `${TIME_CONTROLS[g.timeControl]?.label || "Untimed"} · tap to join`;
+    btn.appendChild(title);
+    btn.appendChild(meta);
+    btn.addEventListener("click", () => startOnlineAsGuest(g.code));
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+el("btn-refresh-open").addEventListener("click", renderOpenGames);
 
 function startBotGame(elo, humanColor) {
   mode = "bot";
@@ -1480,7 +1730,7 @@ function startBotGame(elo, humanColor) {
   updateSideLabels();
   el("btn-resign").classList.remove("hidden");
   el("btn-rematch").classList.remove("hidden");
-  el("btn-rematch").textContent = "New game";
+  setRematchLabel("New game");
   el("chat-card").classList.add("hidden");
   showScreen("game");
   render();
@@ -1567,22 +1817,64 @@ el("btn-replay-back").addEventListener("click", goHome);
 
 // ---------- Navigation ----------
 
-function goHome() {
-  if (mode && mode !== "spectate" && viewState === "game" && !game.isGameOver()) {
-    const messages = {
-      local: "Leave this game? It'll be saved so you can resume from Home.",
-      bot: "Leave this game? Your progress against the bot won't be saved.",
-      online: "Leave this game? Your friend will see you disconnect, and it won't be saved.",
-    };
-    if (!window.confirm(messages[mode] || "Leave this game?")) return;
+// --- Browser back button ---
+//
+// While you're on any non-home screen we keep one extra entry in the
+// browser's history. Pressing Back then pops *that* entry instead of
+// leaving the app (which used to close a game in progress), and we decide
+// what to do: confirm if a game is live, otherwise just return Home.
+function syncHistoryGuard(name) {
+  if (name === "home") {
+    if (guardActive) {
+      guardActive = false;
+      ignorePop = true; // the pop we're about to cause is ours, not the user's
+      history.back();
+    }
+  } else if (!guardActive) {
+    guardActive = true;
+    history.pushState({ oakwood: "guard" }, "");
   }
-  if (mode === "local" && !game.isGameOver()) {
+}
+
+function needsLeaveConfirm() {
+  return !!mode && mode !== "spectate" && viewState === "game" && !game.isGameOver() && !gameRecorded;
+}
+
+function leaveMessage() {
+  const messages = {
+    local: "Leave this game? It'll be saved so you can resume from Home.",
+    bot: "Leave this game? Your progress against the bot won't be saved.",
+    online: "Leave this game? Your friend will see you disconnect, and it won't be saved.",
+  };
+  return messages[mode] || "Leave this game?";
+}
+
+window.addEventListener("popstate", () => {
+  if (ignorePop) {
+    ignorePop = false;
+    return;
+  }
+  if (!guardActive) return;
+  guardActive = false; // the browser already removed our entry
+  if (needsLeaveConfirm() && !window.confirm(leaveMessage())) {
+    guardActive = true; // stay put: put the guard entry back
+    history.pushState({ oakwood: "guard" }, "");
+    return;
+  }
+  leaveToHome();
+});
+
+// Leaves whatever screen we're on, without asking.
+function leaveToHome() {
+  if (mode === "local" && !game.isGameOver() && !gameRecorded) {
     saveLocalProgress();
   }
   if ((mode === "online" || mode === "spectate") && room) {
     room.close();
   }
   delistLiveGame();
+  delistOpenGame();
+  exitReview();
   mode = null;
   room = null;
   if (clock) clock.stop();
@@ -1592,10 +1884,14 @@ function goHome() {
   renderHistoryList();
 }
 
+function goHome() {
+  if (needsLeaveConfirm() && !window.confirm(leaveMessage())) return;
+  leaveToHome();
+}
+
 el("btn-home").addEventListener("click", goHome);
 el("btn-cancel-room").addEventListener("click", goHome);
 
-el("btn-local").addEventListener("click", startLocal);
 el("btn-create").addEventListener("click", () => {
   if (el("custom-position-toggle").checked) startPositionSetup();
   else startOnlineAsHost();
@@ -1780,9 +2076,14 @@ el("btn-copy-watch-game").addEventListener("click", async () => {
 });
 
 // Best-effort cleanup if the host just closes the tab mid-game.
-window.addEventListener("pagehide", () => delistLiveGame());
+window.addEventListener("pagehide", () => {
+  delistLiveGame();
+  delistOpenGame();
+});
 
 // ---------- Boot ----------
+
+setHomeMode(homeMode);
 
 const params = new URLSearchParams(location.search);
 const joinId = params.get("join");

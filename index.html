@@ -212,9 +212,10 @@
     </nav>
 
   <div class="app">
-    <header class="titlebar">
+    <header class="titlebar" id="titlebar">
       <img src="icons/icon-512.png" alt="Oakwood Chess" class="app-logo" />
       <p class="tagline">A quiet board for you and a friend.</p>
+      <button id="btn-sound" class="icon-btn" title="Toggle sound" aria-label="Toggle sound">🔊</button>
     </header>
 
     <div id="install-banner" class="install-banner hidden">
@@ -228,37 +229,31 @@
     <main class="table">
 
       <section id="board-wrap" class="board-wrap hidden">
-        <div class="board-frame">
-          <div id="board" class="board" aria-label="Chess board"></div>
-          <div class="files" aria-hidden="true">
-            <span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span>
+        <div id="bar-them" class="player-bar">
+          <div class="side-tag" id="tag-them">
+            <span class="side-label" id="them-label">Black</span>
+            <span class="side-clock" id="clock-them"></span>
           </div>
-          <div class="ranks" aria-hidden="true">
-            <span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span>
-          </div>
+          <div id="captured-them" class="captured-tray"></div>
         </div>
+
+        <div id="board" class="board" aria-label="Chess board"></div>
+
         <div id="status" class="status">&nbsp;</div>
+
+        <div id="bar-you" class="player-bar">
+          <div class="side-tag" id="tag-you">
+            <span class="side-label">You &middot; <span id="you-color">White</span></span>
+            <span class="side-clock" id="clock-you"></span>
+          </div>
+          <div id="captured-you" class="captured-tray"></div>
+        </div>
       </section>
 
       <aside class="panel">
 
         <!-- HOME -->
         <div id="screen-home" class="screen">
-
-          <div class="card">
-            <h2>Play vs Computer</h2>
-            <p class="muted">Practice offline — no opponent required.</p>
-            <div id="bot-elo-picker">
-              <!-- filled in by JS from bot.js's TIERS/BOTS, so the list of
-                   levels only has to be maintained in one place -->
-            </div>
-            <div id="bot-color" class="chip-row" role="radiogroup" aria-label="Play as" style="margin-top:6px;">
-              <button class="chip" data-color="w">Play as White</button>
-              <button class="chip" data-color="b">Play as Black</button>
-              <button class="chip" data-color="random">Random</button>
-            </div>
-            <button id="btn-play-bot" class="btn btn-primary">Play</button>
-          </div>
 
           <div id="resume-card" class="card accent-card hidden">
             <h2>Game in progress</h2>
@@ -269,44 +264,79 @@
             </div>
           </div>
 
-          <div class="card">
-            <h2>New game</h2>
-            <p class="muted">Choose a time control, then play locally or invite a friend.</p>
+          <!-- One primary action. It starts whichever mode is selected below,
+               and says what it's about to start. -->
+          <button id="btn-main-play" class="btn btn-primary btn-play-main">
+            <span class="play-title">Play</span>
+            <span id="play-summary" class="play-summary">vs Computer · 1000 · White</span>
+          </button>
+
+          <div id="mode-switch" class="segmented" role="tablist" aria-label="Game mode">
+            <button data-mode="online" role="tab">Online</button>
+            <button data-mode="bot" role="tab">vs Computer</button>
+            <button data-mode="local" role="tab">Local / Friend</button>
+          </div>
+
+          <!-- Shared by Online and Local / Friend -->
+          <div id="tc-section" class="card mode-card hidden">
+            <p class="field-label">Time control</p>
             <div id="time-control" class="chip-row" role="radiogroup" aria-label="Time control">
               <button class="chip" data-tc="untimed">Untimed</button>
+              <button class="chip" data-tc="m1">1 min</button>
+              <button class="chip" data-tc="b3">3 min</button>
+              <button class="chip" data-tc="b3i2">3 | 2</button>
               <button class="chip" data-tc="b5">5 min</button>
+              <button class="chip" data-tc="b5i3">5 | 3</button>
               <button class="chip" data-tc="b10">10 min</button>
-              <button class="chip" data-tc="b15">15 min</button>
+              <button class="chip" data-tc="b15i10">15 | 10</button>
+              <button class="chip" data-tc="b30">30 min</button>
             </div>
-            <button id="btn-local" class="btn btn-primary">Play locally, one board two players</button>
-            <div class="divider"><span>or</span></div>
+            <p class="muted" style="margin:10px 0 0;font-size:.78rem;">“3 | 2” = 3 minutes, plus 2 seconds added after every move you make.</p>
+          </div>
+
+          <div id="panel-bot" class="card mode-card">
+            <p class="field-label">Difficulty</p>
+            <div id="bot-elo-picker" class="elo-row" role="radiogroup" aria-label="Bot level"></div>
+            <p class="field-label">Play as</p>
+            <div id="bot-color" class="chip-row" role="radiogroup" aria-label="Play as">
+              <button class="chip" data-color="w">Play as White</button>
+              <button class="chip" data-color="b">Play as Black</button>
+              <button class="chip" data-color="random">Random</button>
+            </div>
+          </div>
+
+          <div id="panel-local" class="card mode-card hidden">
+            <p class="muted" style="margin:0 0 4px;">Press <b>Play</b> to play on this device — one board, two players.</p>
+            <p class="field-label">Play a friend online</p>
             <button id="btn-create" class="btn btn-ghost">Create a room for a friend</button>
             <label class="checkbox-row">
               <input type="checkbox" id="custom-position-toggle" />
-              <span>Set up a custom position first (remove pieces — for practicing specific positions with a friend)</span>
+              <span>Set up a custom position first (remove pieces)</span>
             </label>
             <label class="checkbox-row">
               <input type="checkbox" id="allow-spectators-toggle" />
-              <span>Let others watch this game live (listed in the Watch tab)</span>
+              <span>Let others watch this game live</span>
             </label>
-          </div>
-
-          <div class="card">
-            <h2>Join a friend's room</h2>
-            <p class="muted">Got a code from a friend? Type it in — or just open the link they sent you.</p>
+            <p class="field-label">Join a friend's room</p>
             <div class="link-row">
-              <input id="join-code" type="text" maxlength="6" placeholder="e.g. K7QX" class="text-input code-input" autocapitalize="characters" autocomplete="off" />
+              <input id="join-code" type="text" maxlength="6" placeholder="Enter room code" class="text-input code-input" autocapitalize="characters" autocomplete="off" />
               <button id="btn-join-code" class="btn btn-primary btn-small">Join</button>
             </div>
             <p id="join-error" class="conn-state error hidden"></p>
           </div>
 
-          <div class="card">
-            <h2>Share Oakwood Chess</h2>
-            <p class="muted">Know someone who'd enjoy a game? Send them the app.</p>
-            <button id="btn-share-app" class="btn btn-ghost">Share</button>
-            <p id="share-note" class="conn-state success hidden" style="margin:8px 0 0;"></p>
+          <div id="panel-online" class="card mode-card hidden">
+            <p id="open-games-note" class="muted" style="margin:0 0 10px;"></p>
+            <p class="field-label">Open games</p>
+            <ol id="open-games-list" class="history-list"></ol>
+            <button id="btn-refresh-open" class="btn btn-ghost btn-small" style="margin-top:10px;">Refresh</button>
           </div>
+
+          <button id="btn-share-app" class="btn btn-ghost btn-share">
+            <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
+            <span>Share Oakwood Chess</span>
+          </button>
+          <p id="share-note" class="conn-state success hidden" style="margin:0;"></p>
 
           <div class="card card-wide">
             <h2>History</h2>
@@ -354,29 +384,7 @@
 
         <!-- PLAYING -->
         <div id="screen-game" class="screen hidden">
-          <div class="card">
-            <div class="turn-row">
-              <div class="side-tag" id="tag-you">
-                <span class="side-label">You &middot; <span id="you-color">White</span></span>
-                <span class="side-clock" id="clock-you"></span>
-              </div>
-              <div class="side-tag" id="tag-them">
-                <span class="side-label" id="them-label">Black</span>
-                <span class="side-clock" id="clock-them"></span>
-              </div>
-            </div>
-            <div class="captured-row">
-              <div id="captured-you" class="captured-tray"></div>
-              <div id="captured-them" class="captured-tray"></div>
-            </div>
-
-            <p id="watchers-note" class="muted hidden" style="margin:4px 0 0;">👀 <span id="watchers-count">0</span> watching</p>
-            <button id="btn-copy-watch-game" class="btn btn-ghost btn-small hidden" style="margin-top:6px;">Copy watch link</button>
-
-            <div id="spectator-banner" class="request-banner hidden">
-              <p>👀 You're watching this game live — moves update automatically.</p>
-            </div>
-
+          <div class="card game-card">
             <div id="request-banner" class="request-banner hidden">
               <p id="request-text"></p>
               <div class="controls">
@@ -385,16 +393,37 @@
               </div>
             </div>
 
-            <h3>Moves</h3>
-            <ol id="move-list" class="move-list"></ol>
+            <div id="spectator-banner" class="request-banner hidden">
+              <p>👀 You're watching this game live — moves update automatically.</p>
+            </div>
+            <p id="watchers-note" class="muted hidden" style="margin:0 0 6px;">👀 <span id="watchers-count">0</span> watching</p>
+            <p id="listing-warning" class="muted warn hidden"></p>
+            <button id="btn-copy-watch-game" class="btn btn-ghost btn-small hidden" style="margin-bottom:8px;">Copy watch link</button>
+
+            <!-- Horizontal move strip, like chess.com. Tap a move (or use the
+                 arrows) to look back; any new move snaps back to live. -->
+            <div class="move-strip">
+              <button id="btn-mv-prev" class="strip-btn" aria-label="Previous move">&#8249;</button>
+              <ol id="move-list" class="move-list"></ol>
+              <button id="btn-mv-next" class="strip-btn" aria-label="Next move">&#8250;</button>
+            </div>
 
             <div id="game-controls" class="controls">
-              <button id="btn-flip" class="btn btn-ghost btn-small">Flip board</button>
-              <button id="btn-undo" class="btn btn-ghost btn-small">Undo</button>
-              <button id="btn-sound" class="btn btn-ghost btn-small" title="Toggle sound">🔊</button>
-              <button id="btn-resign" class="btn btn-danger btn-small hidden">Resign</button>
-              <button id="btn-rematch" class="btn btn-ghost btn-small hidden">Rematch</button>
-              <button id="btn-home" class="btn btn-ghost btn-small">Home</button>
+              <button id="btn-flip" class="btn tool">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg><span>Flip</span>
+              </button>
+              <button id="btn-undo" class="btn tool">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>Undo</span>
+              </button>
+              <button id="btn-resign" class="btn tool tool-danger hidden">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 22V4"/><path d="M4 4h13l-2 4 2 4H4"/></svg><span>Resign</span>
+              </button>
+              <button id="btn-rematch" class="btn tool hidden">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg><span id="rematch-label">New game</span>
+              </button>
+              <button id="btn-home" class="btn tool">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg><span>Home</span>
+              </button>
             </div>
           </div>
 

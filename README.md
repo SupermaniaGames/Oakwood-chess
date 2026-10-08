@@ -6,18 +6,33 @@ files.
 
 ## Getting around
 
-- **Mobile:** a bottom bar — Home, Learn, Watch, Account.
-- **Desktop:** a persistent left sidebar with the same four sections
-  (no bottom bar on desktop — it looked out of place with the extra
-  screen width, so it's hidden there).
-- **Home** is just ways to start or resume playing: local, vs the computer,
-  online, plus your game history. Rating, sign-in and the leaderboard live
-  under **Account** instead, and the rules/lessons live under **Learn**.
+- **Mobile:** a bottom bar — Home, Learn, Watch, Account. During a game it
+  switches to the game toolbar (Flip · Undo · Resign · New game · Home).
+- **Desktop:** a left sidebar with the same four sections.
+- **Home** is one big **Play** button plus a mode switcher —
+  **Online · vs Computer · Local / Friend**. The button always says what it
+  will start ("vs Computer · 1000 · White", "Local · 3 | 2"). History and
+  Share sit below. Rating, sign-in and the leaderboard live under
+  **Account**; lessons under **Learn**.
+- **The game page** is built to fit one phone screen with no scrolling:
+  opponent bar (with the pieces they've captured) above the board, you
+  below it, a horizontal move strip, and the toolbar. The board has no
+  border; rank numbers and file letters sit inside the squares in small
+  type. ‹ › (or tapping a move) lets you look back through the game;
+  any new move snaps back to live.
+- **Back button:** during a live game it asks before leaving (and stays if
+  you say no) instead of closing the game. From Learn / Watch / Account it
+  returns Home. On Home it behaves normally.
 
 ## Play it
 
-- **Pick a time control** (untimed, 5, 10 or 15 minutes) before starting a
-  local or online game.
+- **Pick a time control** before starting a local or online game: untimed,
+  1, 3, 5, 10, 15 or 30 minutes, or with an increment — **3 | 2**, **5 | 3**,
+  **15 | 10** (minutes | seconds added after every move you make). A friend
+  room uses the time control you've selected; the Create button and the
+  waiting screen both say which. *Both players need the current version of
+  the app for the newer controls* — an older cached copy doesn't know them
+  and will treat the game as untimed.
 - **Locally on one PC:** click "Play locally, one board two players" and pass
   the device back and forth, taking turns clicking the board.
 - **Vs the computer:** pick a bot level — nine rungs from 250 to 1800,
@@ -68,6 +83,15 @@ anywhere with HTTPS — installability needs a secure origin):
   most likely wasn't open yet or the host closed the tab; ask them to
   re-share the current code.
 
+## Online (play someone you haven't met)
+
+Needs Firebase (the Online tab shows 🔒 until it's configured). Press
+**Play** on the Online tab: it joins the longest-waiting open game with your
+time control, or opens a room and waits, listed under **Open games** so
+others can join it too. You can also pick a game from that list yourself.
+A listing disappears the moment someone joins or you cancel. This is a
+simple lobby, not rating-based matchmaking — you get whoever's waiting.
+
 ## Watching games (spectators)
 
 Online games can be watched live, read-only — it's **opt-in per game**:
@@ -83,6 +107,14 @@ the host ticks "Let others watch this game live" when creating the room.
   without the tick refuse spectators, and a third person opening an invite
   link to a full room is turned away rather than silently watching.
 - Spectated games aren't saved to the spectator's history or rating.
+- You can also browse back through a game you're watching (‹ ›) without
+  losing your place when new moves arrive.
+- **If the Watch tab always shows nothing**, check the Firestore rules
+  below. The `liveGames` rule must be published, or hosts can't list their
+  games and the list can't be read. The app now says so: a host whose
+  listing is refused sees a warning, and the Watch tab explains the missing
+  rule instead of showing an empty list. (A game also only appears once
+  the opponent has joined, and only if the host ticked *Let others watch*.)
 - Moves still travel peer-to-peer through the host's browser, so a game
   with many watchers uses the host's upload bandwidth, and the game ends
   for everyone if the host closes their tab.
@@ -230,6 +262,13 @@ paste six values into one file. No credit card required.
          allow read: if true;
          allow write: if request.auth != null && request.auth.uid == uid;
        }
+       match /openGames/{code} {
+         allow read: if true;
+         allow create: if request.auth != null
+                        && request.resource.data.hostUid == request.auth.uid;
+         allow update, delete: if request.auth != null
+                        && resource.data.hostUid == request.auth.uid;
+       }
        match /liveGames/{code} {
          allow read: if true;
          allow create: if request.auth != null
@@ -250,6 +289,7 @@ paste six values into one file. No credit card required.
      }
    }
    ```
+   `openGames` is the Online tab's lobby of rooms waiting for an opponent.
    `liveGames` is the Watch tab's list of games hosts have opted to share
    (only the host who listed a game can change or remove it).
    `players` holds each account's rating; `usernames` is a separate

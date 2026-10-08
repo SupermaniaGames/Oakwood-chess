@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v5";
+const CACHE_NAME = "oakwood-chess-v6";
 const APP_SHELL = [
   "./",
   "./index.html",

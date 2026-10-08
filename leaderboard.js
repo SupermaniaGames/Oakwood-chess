@@ -325,6 +325,14 @@ export async function fetchLeaderboard(max = 20) {
   }
 }
 
+// Why the last live-games / lobby call failed (e.g. "permission-denied" when
+// the Firestore rules for that collection haven't been published). The UI
+// uses this to tell people the real problem instead of an empty list.
+const lastErrorCode = {};
+export function getFirestoreErrorCode(kind) {
+  return lastErrorCode[kind] || null;
+}
+
 // --- Live games directory (for the Watch tab's spectator list) ---
 //
 // This is deliberately a thin "presence" list, not a game-state relay:
@@ -347,8 +355,10 @@ export async function registerLiveGame(code, info) {
       hostUid: state.auth.currentUser.uid,
       startedAt: serverTimestamp(),
     });
+    lastErrorCode.liveWrite = null;
     return true;
   } catch (err) {
+    lastErrorCode.liveWrite = err?.code || "unknown";
     console.warn("Oakwood Chess: couldn't list this game as live.", err);
     return false;
   }
@@ -373,9 +383,66 @@ export async function fetchLiveGames(max = 20) {
     const { collection, query, orderBy, limit, getDocs } = state.store;
     const q = query(collection(state.db, "liveGames"), orderBy("startedAt", "desc"), limit(max));
     const snap = await getDocs(q);
+    lastErrorCode.live = null;
     return snap.docs.map((d) => ({ code: d.id, ...d.data() }));
   } catch (err) {
+    lastErrorCode.live = err?.code || "unknown";
     console.warn("Oakwood Chess: couldn't load live games.", err);
+    return null;
+  }
+}
+
+// --- Open games lobby (Online tab) ---
+//
+// Same idea as the live-games list: Firestore only records "this room is
+// open and waiting"; the game itself still runs peer-to-peer. A listing is
+// removed as soon as an opponent joins or the host leaves.
+
+export async function registerOpenGame(code, info) {
+  await ready();
+  if (!state) return false;
+  try {
+    const { doc, setDoc, serverTimestamp } = state.store;
+    await setDoc(doc(state.db, "openGames", code), {
+      hostName: (info.hostName || "Player").slice(0, 24),
+      rating: typeof info.rating === "number" ? info.rating : 1200,
+      timeControl: info.timeControl || "untimed",
+      hostUid: state.auth.currentUser.uid,
+      createdAt: serverTimestamp(),
+    });
+    lastErrorCode.openWrite = null;
+    return true;
+  } catch (err) {
+    lastErrorCode.openWrite = err?.code || "unknown";
+    console.warn("Oakwood Chess: couldn't list this room in the lobby.", err);
+    return false;
+  }
+}
+
+export async function unregisterOpenGame(code) {
+  await ready();
+  if (!state) return;
+  try {
+    const { doc, deleteDoc } = state.store;
+    await deleteDoc(doc(state.db, "openGames", code));
+  } catch {
+    /* best-effort: a stale listing just fails to connect and is skipped */
+  }
+}
+
+// Oldest first, so whoever has waited longest gets matched first.
+export async function fetchOpenGames(max = 30) {
+  await ready();
+  if (!state) return null;
+  try {
+    const { collection, query, orderBy, limit, getDocs } = state.store;
+    const q = query(collection(state.db, "openGames"), orderBy("createdAt", "asc"), limit(max));
+    const snap = await getDocs(q);
+    lastErrorCode.open = null;
+    return snap.docs.map((d) => ({ code: d.id, ...d.data() }));
+  } catch (err) {
+    lastErrorCode.open = err?.code || "unknown";
+    console.warn("Oakwood Chess: couldn't load open games.", err);
     return null;
   }
 }
