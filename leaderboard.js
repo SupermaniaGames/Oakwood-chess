@@ -8,6 +8,17 @@
 // in with Google or email *links* that same anonymous account to the
 // provider where possible, so the uid — and therefore the rating history
 // already stored under it — carries over rather than resetting.
+//
+// Where a profile lives:
+//   users/{uid}        the account's own profile (name, rating, games) — the
+//                      permanent record, keyed by the Firebase uid, so the
+//                      same Google account sees the same name on every device.
+//   usernames/{name}   a lock on the lower-cased name so two accounts can't
+//                      share one (written together with users/{uid}).
+//   players/{uid}      a public copy of name/rating/games that the
+//                      leaderboard reads. Written alongside users/{uid}.
+// Profiles saved before users/ existed live only in players/{uid}; they are
+// read from there and copied into users/{uid} the first time they're seen.
 
 import { firebaseConfig, firebaseEnabled } from "./firebase-config.js";
 
@@ -130,7 +141,7 @@ function describeAuthError(err) {
 export async function signInWithGoogle() {
   await ready();
   if (!state) return { ok: false, error: "Firebase isn't configured yet." };
-  const { GoogleAuthProvider, linkWithPopup, signInWithPopup } = state.authFns;
+  const { GoogleAuthProvider, linkWithPopup, signInWithPopup, signInWithCredential } = state.authFns;
   const provider = new GoogleAuthProvider();
   try {
     if (state.auth.currentUser?.isAnonymous) {
@@ -142,11 +153,17 @@ export async function signInWithGoogle() {
     notifyAuthListeners();
     return { ok: true, user: currentUserInfo(), _raw: result.user };
   } catch (err) {
-    // This Google account is already tied to a different existing user —
-    // sign into that pre-existing account instead of failing outright.
+    // This Google account already belongs to a different (earlier) user —
+    // e.g. it was set up on another device. Sign into THAT account using the
+    // credential the failed link already obtained. (Opening a second popup
+    // here is what phones tend to block, which used to leave the person on a
+    // fresh guest account with a different username.)
     if (err?.code === "auth/credential-already-in-use") {
       try {
-        const result = await signInWithPopup(state.auth, provider);
+        const credential = GoogleAuthProvider.credentialFromError(err);
+        if (!credential) return { ok: false, error: "Couldn't finish signing in — please try again." };
+        await releaseGuestProfile();
+        const result = await signInWithCredential(state.auth, credential);
         notifyAuthListeners();
         return { ok: true, user: currentUserInfo(), _raw: result.user };
       } catch (err2) {
@@ -154,6 +171,33 @@ export async function signInWithGoogle() {
       }
     }
     return { ok: false, error: describeAuthError(err) };
+  }
+}
+
+// The guest account we're about to walk away from still owns a username lock
+// and a leaderboard row. While we're still signed in as it, hand both back,
+// so the name isn't stuck on an abandoned account and no ghost entry stays
+// on the leaderboard.
+async function releaseGuestProfile() {
+  const user = state?.auth?.currentUser;
+  if (!user || !user.isAnonymous) return;
+  const { doc, getDoc, deleteDoc } = state.store;
+  try {
+    const [u, p] = await Promise.all([
+      getDoc(doc(state.db, "users", user.uid)),
+      getDoc(doc(state.db, "players", user.uid)),
+    ]);
+    const name = (u.exists() && u.data().name) || (p.exists() && p.data().name) || null;
+    if (name) {
+      const claim = await getDoc(doc(state.db, "usernames", name.toLowerCase()));
+      if (claim.exists() && claim.data().uid === user.uid) {
+        await deleteDoc(doc(state.db, "usernames", name.toLowerCase()));
+      }
+    }
+    if (u.exists()) await deleteDoc(doc(state.db, "users", user.uid));
+    if (p.exists()) await deleteDoc(doc(state.db, "players", user.uid));
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't tidy the guest profile.", err);
   }
 }
 
@@ -198,16 +242,28 @@ export async function signOutUser() {
   // fresh anonymous session automatically, so gameplay keeps working.
 }
 
-// Reads this account's saved profile from Firestore, if any. Used to make
-// sign-in restore your real username/rating instead of showing whatever
-// (or nothing) happens to be cached locally on this particular device.
+// Reads this account's saved profile (users/{uid}), so signing in — or just
+// reopening the app — shows the account's real name and rating instead of
+// whatever is cached on this device. A profile that only exists in the older
+// players/{uid} record is copied across the first time it's read.
 export async function fetchMyProfile() {
   await ready();
-  if (!state) return null;
+  if (!state || !state.auth.currentUser) return null;
+  const uid = state.auth.currentUser.uid;
   try {
-    const { doc, getDoc } = state.store;
-    const snap = await getDoc(doc(state.db, "players", state.auth.currentUser.uid));
-    return snap.exists() ? snap.data() : null;
+    const { doc, getDoc, setDoc } = state.store;
+    const snap = await getDoc(doc(state.db, "users", uid));
+    if (snap.exists()) return snap.data();
+    const legacy = await getDoc(doc(state.db, "players", uid));
+    if (!legacy.exists()) return null;
+    const d = legacy.data();
+    const profile = { name: d.name || "", rating: d.rating ?? 1200, games: d.games ?? 0, uid };
+    try {
+      await setDoc(doc(state.db, "users", uid), profile, { merge: true });
+    } catch {
+      /* copying is best-effort; the legacy record still answers */
+    }
+    return profile;
   } catch (err) {
     console.warn("Oakwood Chess: couldn't load your saved profile.", err);
     return null;
@@ -237,23 +293,35 @@ export async function checkUsernameAvailable(name) {
 // security rules). Releases any previous username this account held.
 export async function claimUsername(name) {
   await ready();
-  if (!state) return { ok: false, error: "Firebase isn't configured yet." };
+  if (!state || !state.auth.currentUser) return { ok: false, error: "Firebase isn't configured yet." };
+  return claimUsernameFor(state.auth.currentUser.uid, name);
+}
+
+// Same, but for a specific account: if the signed-in account changes while
+// this is running (a sign-in finishing, say) it stops instead of attaching the
+// name to whoever happens to be signed in by then.
+async function claimUsernameFor(uid, name) {
+  const stillMe = () => state?.auth?.currentUser?.uid === uid;
+  if (!stillMe()) return { ok: false, error: "The account changed — try again." };
   const trimmed = (name || "").trim();
   if (!trimmed) return { ok: false, error: "Enter a username first." };
   if (trimmed.length > 24) return { ok: false, error: "Keep it under 24 characters." };
   const key = trimmed.toLowerCase();
-  const uid = state.auth.currentUser.uid;
   const { doc, runTransaction } = state.store;
   try {
     await runTransaction(state.db, async (tx) => {
+      if (!stillMe()) throw new Error("account-changed");
       const claimRef = doc(state.db, "usernames", key);
       const claimSnap = await tx.get(claimRef);
       if (claimSnap.exists() && claimSnap.data().uid !== uid) {
         throw new Error("taken");
       }
+      const userRef = doc(state.db, "users", uid);
       const playerRef = doc(state.db, "players", uid);
+      const userSnap = await tx.get(userRef);
       const playerSnap = await tx.get(playerRef);
-      const prevName = playerSnap.exists() ? playerSnap.data().name : null;
+      const prevName =
+        (userSnap.exists() && userSnap.data().name) || (playerSnap.exists() && playerSnap.data().name) || null;
       const prevKey = prevName ? prevName.toLowerCase() : null;
       // Firestore transactions need every read before any write, so look
       // up the old claim now rather than blindly deleting it: if it was
@@ -268,44 +336,51 @@ export async function claimUsername(name) {
       if (prevClaimSnap && prevClaimSnap.exists() && prevClaimSnap.data().uid === uid) {
         tx.delete(prevRef);
       }
-      tx.set(claimRef, { uid });
+      // Dual write: lock the handle, save it on the account's own profile,
+      // and mirror it onto the public leaderboard row.
+      tx.set(claimRef, { uid, name: trimmed });
+      tx.set(userRef, { name: trimmed, uid }, { merge: true });
       tx.set(playerRef, { name: trimmed, uid }, { merge: true });
     });
     return { ok: true, name: trimmed };
   } catch (err) {
     if (err?.message === "taken") return { ok: false, error: "That username is already taken." };
+    if (err?.message === "account-changed") return { ok: false, error: "The account changed — try again." };
     return { ok: false, error: err?.message || "Couldn't save that username right now." };
   }
 }
 
-// Upserts this account's player doc. Fire-and-forget is fine — it never
-// blocks gameplay, and failures are logged, not thrown.
+// Saves rating/games for this account (users/{uid} + the public players/{uid}
+// row). The NAME is never taken from this device's cache if the account
+// already has one in the cloud — a device whose copy is out of date must not
+// overwrite a name chosen on another. Only an account with no name yet claims
+// the one passed in. Returns { ok, name } (the name the account really has),
+// so the caller can update its local copy. Never throws.
 export async function pushProfile(profile) {
   await ready();
-  if (!state) return false;
-  const name = (profile.name || "").trim();
-  if (!name) return false; // don't clutter the leaderboard with nameless entries
-  // A name should only ever reach the leaderboard through the unique-claim
-  // path — otherwise one typed while Firebase was off (or from older data)
-  // could be pushed unchecked and duplicate someone else's. Claiming your
-  // own existing name is a harmless no-op.
-  const claim = await claimUsername(name);
-  if (!claim.ok) return false;
+  if (!state || !state.auth.currentUser) return { ok: false, name: "" };
+  const uid = state.auth.currentUser.uid; // this call is for THIS account only
+  const stillMe = () => state.auth.currentUser?.uid === uid;
+  const cloud = await fetchMyProfile();
+  if (!stillMe()) return { ok: false, name: "" };
+  let name = (cloud && cloud.name) || "";
+  if (!name) {
+    const wanted = (profile.name || "").trim();
+    if (!wanted) return { ok: false, name: "" }; // no nameless leaderboard entries
+    const claim = await claimUsernameFor(uid, wanted); // unique-claim path only
+    if (!claim.ok) return { ok: false, name: "" };
+    name = wanted;
+  }
+  if (!stillMe()) return { ok: false, name };
   try {
     const { doc, setDoc, serverTimestamp } = state.store;
-    await setDoc(
-      doc(state.db, "players", state.auth.currentUser.uid),
-      {
-        rating: profile.rating,
-        games: profile.games,
-        updatedAt: serverTimestamp(),
-      },
-      { merge: true }
-    );
-    return true;
+    const data = { rating: profile.rating, games: profile.games, updatedAt: serverTimestamp() };
+    await setDoc(doc(state.db, "users", uid), { ...data, name, uid }, { merge: true });
+    await setDoc(doc(state.db, "players", uid), { ...data, name, uid }, { merge: true });
+    return { ok: true, name };
   } catch (err) {
     console.warn("Oakwood Chess: couldn't sync rating.", err);
-    return false;
+    return { ok: false, name };
   }
 }
 

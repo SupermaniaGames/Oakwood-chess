@@ -20,6 +20,9 @@ const ICE_CONFIG = {
   ],
 };
 
+// The only messages a spectator may send: one of these reaction emojis.
+const SPECTATOR_EMOJIS = ["👏", "🔥", "👑", "😱"];
+
 export class Room {
   constructor({ onOpen, onConnected, onData, onPeerLeft, onError, onSpectatorCountChange, onSpectatorJoin }) {
     this.onOpen = onOpen;
@@ -124,8 +127,18 @@ export class Room {
       // Late joiners need the current position, not just future moves.
       this.onSpectatorJoin && this.onSpectatorJoin((msg) => conn.send(msg));
     });
-    conn.on("data", () => {
-      /* spectators are read-only: whatever they send is ignored */
+    conn.on("data", (data) => {
+      // Spectators are read-only: they can't move or chat. The one thing the
+      // host accepts from them is an emoji reaction, which is passed on to
+      // the OTHER spectators only (never to the opponent, and never shown on
+      // the host's own screen) so the players aren't distracted.
+      if (!data || data.type !== "spectator-emoji" || !SPECTATOR_EMOJIS.includes(data.e)) return;
+      const now = Date.now();
+      if (now - (conn._lastEmojiAt || 0) < 250) return; // per-spectator rate limit
+      conn._lastEmojiAt = now;
+      for (const other of this.spectatorConns) {
+        if (other !== conn && other.open) other.send({ type: "spectator-emoji", e: data.e });
+      }
     });
     conn.on("close", () => {
       this.spectatorConns = this.spectatorConns.filter((c) => c !== conn);
@@ -162,6 +175,13 @@ export class Room {
     if (this.isSpectator) return; // read-only, never sends game data
     if (this.conn && this.conn.open) this.conn.send(message);
     this._mirrorToSpectators(message, "host");
+  }
+
+  // Spectator side: send a reaction to the host, who relays it to the other
+  // spectators. (send() above stays a no-op for spectators on purpose.)
+  sendEmoji(emoji) {
+    if (!this.isSpectator || !SPECTATOR_EMOJIS.includes(emoji)) return;
+    if (this.conn && this.conn.open) this.conn.send({ type: "spectator-emoji", e: emoji });
   }
 
   close() {

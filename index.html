@@ -238,6 +238,7 @@
         </div>
 
         <div id="board" class="board" aria-label="Chess board"></div>
+        <div id="emoji-layer" class="emoji-layer" aria-hidden="true"></div>
 
         <div id="status" class="status">&nbsp;</div>
 
@@ -332,6 +333,11 @@
             <button id="btn-refresh-open" class="btn btn-ghost btn-small" style="margin-top:10px;">Refresh</button>
           </div>
 
+          <button id="btn-open-puzzles" class="btn btn-ghost btn-puzzles">
+            <span aria-hidden="true">🧩</span>
+            <span>Puzzles</span>
+          </button>
+
           <button id="btn-share-app" class="btn btn-ghost btn-share">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
             <span>Share Oakwood Chess</span>
@@ -393,8 +399,22 @@
               </div>
             </div>
 
-            <div id="spectator-banner" class="request-banner hidden">
+            <div id="spectator-banner" class="request-banner spectator-banner hidden">
               <p>👀 You're watching this game live — moves update automatically.</p>
+              <p id="spec-commentary" class="spec-commentary hidden"></p>
+              <div id="emoji-bar" class="emoji-bar" aria-label="Cheer (only other spectators see this)">
+                <button type="button" data-emoji="👏" aria-label="Clap">👏</button>
+                <button type="button" data-emoji="🔥" aria-label="Fire">🔥</button>
+                <button type="button" data-emoji="👑" aria-label="Crown">👑</button>
+                <button type="button" data-emoji="😱" aria-label="Wow">😱</button>
+              </div>
+              <div class="controls">
+                <button id="btn-spec-analysis" class="btn btn-ghost btn-small">🧪 Analysis board</button>
+                <button id="btn-spec-undo" class="btn btn-ghost btn-small hidden">Undo test move</button>
+                <button id="btn-spec-live" class="btn btn-primary btn-small hidden">Back to live</button>
+                <button id="btn-spec-voice" class="btn btn-ghost btn-small">🔊 Voice</button>
+              </div>
+              <p id="spec-new-moves" class="muted hidden" style="margin:8px 0 0;"></p>
             </div>
             <p id="watchers-note" class="muted hidden" style="margin:0 0 6px;">👀 <span id="watchers-count">0</span> watching</p>
             <p id="listing-warning" class="muted warn hidden"></p>
@@ -421,6 +441,9 @@
               <button id="btn-rematch" class="btn tool hidden">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg><span id="rematch-label">New game</span>
               </button>
+              <button id="btn-review" class="btn tool hidden">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/></svg><span>Review</span>
+              </button>
               <button id="btn-home" class="btn tool">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m3 10 9-7 9 7v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg><span>Home</span>
               </button>
@@ -445,8 +468,107 @@
             <div class="controls">
               <button id="btn-replay-prev" class="btn btn-ghost btn-small">&larr; Prev</button>
               <button id="btn-replay-next" class="btn btn-ghost btn-small">Next &rarr;</button>
+              <button id="btn-replay-review" class="btn btn-primary btn-small">Game Review</button>
             </div>
             <button id="btn-replay-back" class="btn btn-ghost btn-small" style="margin-top:10px;">Back to home</button>
+          </div>
+        </div>
+
+        <!-- GAME REVIEW -->
+        <div id="screen-review" class="screen hidden">
+          <div class="review-wrap">
+            <div class="review-head">
+              <button id="btn-review-close" class="review-back" aria-label="Back">&#8592;</button>
+              <h2>Game Review</h2>
+              <span class="review-head-gap"></span>
+            </div>
+
+            <div id="review-progress" class="review-progress hidden">
+              <div class="progress-track"><span id="review-progress-bar"></span></div>
+              <p id="review-progress-text" class="muted">Getting ready…</p>
+            </div>
+            <p id="review-error" class="conn-state error hidden"></p>
+
+            <div id="review-body" class="review-body hidden">
+              <!-- Phase 1: summary -->
+              <div id="review-summary" class="review-summary">
+                <div class="coach-row">
+                  <div class="coach-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M6 64c2-14 12-20 26-20s24 6 26 20z" fill="#3b4a5a"/><path d="M24 44l8 10 8-10-4-3h-8z" fill="#f1f1ee"/><circle cx="32" cy="27" r="15" fill="#e0a981"/><path d="M17 27c-1-12 6-17 15-17s16 5 15 17c-2-6-6-9-15-9s-13 3-15 9z" fill="#6a4a32"/><path d="M17 30c0 11 6 18 15 18s15-7 15-18c-3 6-7 8-15 8s-12-2-15-8z" fill="#6a4a32"/><circle cx="26" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><circle cx="38" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><path d="M30.2 27h3.6" stroke="#2a2a2a" stroke-width="1.6"/><path d="M27 38c3 2.5 7 2.5 10 0" stroke="#f1f1ee" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+                  <div id="summary-bubble" class="coach-bubble light"></div>
+                </div>
+                <canvas id="review-graph" class="review-graph" aria-label="Evaluation graph"></canvas>
+                <div class="rv-grid rv-players"><span></span><div id="review-white-name" class="rv-pname">White</div><span></span><div id="review-black-name" class="rv-pname">Black</div></div>
+                <div class="rv-grid rv-accrow"><span class="rv-label">Accuracy</span><div id="acc-w" class="acc-box light-box">–</div><span></span><div id="acc-b" class="acc-box dark-box">–</div></div>
+                <p id="review-opening" class="muted review-opening"></p>
+                <div id="review-table" class="rv-table"></div>
+                <button id="btn-review-start" class="btn btn-start">Start Review</button>
+              </div>
+
+              <!-- Phase 2: step through the game -->
+              <div id="review-steps" class="review-steps hidden">
+                <div class="coach-row coach-top">
+                  <div class="coach-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M6 64c2-14 12-20 26-20s24 6 26 20z" fill="#3b4a5a"/><path d="M24 44l8 10 8-10-4-3h-8z" fill="#f1f1ee"/><circle cx="32" cy="27" r="15" fill="#e0a981"/><path d="M17 27c-1-12 6-17 15-17s16 5 15 17c-2-6-6-9-15-9s-13 3-15 9z" fill="#6a4a32"/><path d="M17 30c0 11 6 18 15 18s15-7 15-18c-3 6-7 8-15 8s-12-2-15-8z" fill="#6a4a32"/><circle cx="26" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><circle cx="38" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><path d="M30.2 27h3.6" stroke="#2a2a2a" stroke-width="1.6"/><path d="M27 38c3 2.5 7 2.5 10 0" stroke="#f1f1ee" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+                  <div class="coach-bubble light" role="status" aria-live="polite">
+                    <div class="coach-head">
+                      <span id="coach-badge" class="coach-badge"></span>
+                      <b id="coach-title"></b>
+                      <span id="coach-eval" class="coach-eval"></span>
+                    </div>
+                    <p id="coach-detail" class="coach-detail"></p>
+                  </div>
+                </div>
+                <div class="move-strip rv-strip">
+                  <button id="btn-mv-rprev" class="strip-btn" aria-label="Previous move">&#8249;</button>
+                  <ol id="review-move-list" class="move-list"></ol>
+                  <button id="btn-mv-rnext" class="strip-btn" aria-label="Next move">&#8250;</button>
+                </div>
+                <div class="rv-bar">
+                  <button id="btn-review-prev" class="rv-btn"><span class="rv-glyph">&#8249;</span><span>Back</span></button>
+                  <button id="btn-review-best" class="rv-btn"><span class="rv-glyph">★</span><span>Best</span></button>
+                  <button id="btn-review-flip" class="rv-btn"><span class="rv-glyph">⇅</span><span>Flip</span></button>
+                  <button id="btn-review-voice" class="rv-btn" aria-pressed="true"><span class="rv-glyph">🔊</span><span>Voice</span></button>
+                  <button id="btn-review-next" class="rv-next">Next</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- PUZZLES MENU -->
+        <div id="screen-puzzles" class="screen hidden">
+          <div class="card">
+            <h2>Puzzles</h2>
+            <div class="puzzle-menu">
+              <button class="puzzle-tile" data-puzzle="pawnrace">
+                <span class="pz-ico" aria-hidden="true">♟</span>
+                <span><b>Pawn Race</b><small>Kings and pawns only. First to make a queen wins.</small></span>
+              </button>
+              <button class="puzzle-tile" data-puzzle="knight">
+                <span class="pz-ico" aria-hidden="true">♞</span>
+                <span><b>Knight's Tour</b><small>Visit every square once with a single knight.</small></span>
+              </button>
+              <button class="puzzle-tile" data-puzzle="mate">
+                <span class="pz-ico" aria-hidden="true">♚</span>
+                <span><b>Checkmate Puzzles</b><small>Mate in 1 or mate in 2.</small></span>
+              </button>
+            </div>
+            <button id="btn-puzzles-back" class="btn btn-ghost btn-small" style="margin-top:14px;">Back to home</button>
+          </div>
+        </div>
+
+        <!-- A PUZZLE (the board is shown above) -->
+        <div id="screen-puzzle" class="screen hidden">
+          <div class="card puzzle-card">
+            <h2 id="pz-title"></h2>
+            <p id="pz-hint" class="muted"></p>
+            <div id="pz-options" class="chip-row hidden"></div>
+            <p id="pz-status" class="pz-status" role="status" aria-live="polite"></p>
+            <div class="controls">
+              <button id="pz-undo" class="btn btn-ghost btn-small hidden">Undo</button>
+              <button id="pz-restart" class="btn btn-ghost btn-small hidden">Restart</button>
+              <button id="pz-next" class="btn btn-primary btn-small hidden">Next puzzle</button>
+              <button id="pz-back" class="btn btn-ghost btn-small">Back</button>
+            </div>
           </div>
         </div>
 

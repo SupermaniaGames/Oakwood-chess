@@ -707,3 +707,233 @@ body[data-screen="replay"] .tagline { display: none; }
   .elo-row { flex-wrap: wrap; overflow: visible; }
   .elo-sep { display: none; }
 }
+
+/* =====================================================================
+   Game Review, Puzzles, spectator extras, phone centering
+   ===================================================================== */
+
+.board-wrap { position: relative; }
+.btn-puzzles { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; }
+
+/* --- Review flip: the whole board turns 180 degrees; pieces, badges and
+   coordinates are turned back so they stay upright and sit on the edges
+   the player expects (left / bottom). --- */
+.board.css-flip { transform: rotate(180deg); }
+.board.css-flip .piece-svg,
+.board.css-flip .move-badge,
+.board.css-flip .sq-label,
+.board.css-flip .coord { transform: rotate(180deg); }
+.board.css-flip .coord.rank { top: auto; left: auto; bottom: 2px; right: 3px; }
+.board.css-flip .coord.file { bottom: auto; right: auto; top: 3px; left: 3px; }
+.board.css-flip .move-badge { top: auto; right: auto; bottom: 2px; left: 2px; }
+
+/* Move-quality badge on the square a move landed on. */
+.move-badge {
+  position: absolute; top: 2px; right: 2px; z-index: 3;
+  min-width: 34%; height: 34%; padding: 0 3px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px; color: #fff; font-weight: 800; line-height: 1;
+  font-size: clamp(8px, calc(var(--board-size) / 36), 15px);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.45);
+  pointer-events: none;
+}
+
+/* Knight's Tour. */
+.sq.tour-visited { background-image: linear-gradient(rgba(139,191,90,0.45), rgba(139,191,90,0.45)); }
+.sq-label {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font-weight: 700; color: rgba(23,26,20,0.75); pointer-events: none;
+  font-size: clamp(9px, calc(var(--board-size) / 24), 18px);
+}
+
+/* Compact header on the new board screens, like Replay. */
+body[data-screen="puzzle"] .titlebar {
+  display: flex; align-items: center; justify-content: center; min-height: 38px; margin-bottom: 6px;
+}
+body[data-screen="puzzle"] .app-logo { width: 34px; height: 34px; border-radius: 9px; box-shadow: none; }
+body[data-screen="puzzle"] .tagline { display: none; }
+
+/* --- Puzzles --- */
+.puzzle-menu { display: grid; gap: 10px; margin-top: 10px; }
+.puzzle-tile {
+  display: flex; align-items: center; gap: 12px; text-align: left; cursor: pointer;
+  background: var(--ink); border: 1px solid var(--panel-line); color: var(--parchment);
+  border-radius: 12px; padding: 12px 14px; font: inherit;
+}
+.puzzle-tile:hover { border-color: var(--accent); }
+.puzzle-tile b { display: block; font-size: 1rem; }
+.puzzle-tile small { display: block; color: var(--parchment-dim); margin-top: 2px; }
+.pz-ico { font-size: 2.1rem; line-height: 1; width: 40px; text-align: center; }
+.pz-status { min-height: 1.5em; margin: 6px 0 0; font-family: var(--font-display); color: var(--parchment); }
+.pz-status[data-kind="win"] { color: var(--accent-bright); }
+.pz-status[data-kind="lose"] { color: var(--danger); }
+.puzzle-card .chip-row { margin: 8px 0; }
+
+/* --- Spectator extras --- */
+.emoji-bar { display: flex; gap: 8px; margin: 8px 0; }
+.emoji-bar button {
+  flex: 1; font-size: 1.4rem; padding: 6px 0; cursor: pointer;
+  background: var(--ink); border: 1px solid var(--panel-line); border-radius: 10px;
+}
+.emoji-bar button:active { transform: scale(0.94); }
+.spec-commentary { margin: 6px 0; color: var(--accent-bright); font-weight: 600; font-size: 0.9rem; }
+.emoji-layer {
+  position: absolute; top: 0; bottom: 0; left: 50%; width: var(--board-size);
+  transform: translateX(-50%); pointer-events: none; overflow: hidden; z-index: 6;
+}
+.float-emoji {
+  position: absolute; bottom: 0; font-size: 2rem; line-height: 1;
+  animation: floatUp 2.4s ease-out forwards;
+}
+@keyframes floatUp {
+  0% { transform: translateY(0) scale(0.7); opacity: 0; }
+  12% { opacity: 1; }
+  100% { transform: translateY(calc(var(--board-size) * -0.9)) scale(1.2); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .float-emoji { animation-duration: 1s; }
+}
+
+/* --- Phone game screen: strip above the board so the board can be centred ---
+   The panel's wrappers dissolve so the banners and move strip become
+   siblings of the board and can be ordered above it (as on chess.com).
+   layoutBoard() in main.js then sizes the board and sets --board-pad so its
+   middle is the middle of the screen. */
+@media (max-width: 899px) {
+  body[data-screen="game"] .panel,
+  body[data-screen="game"] #screen-game,
+  body[data-screen="game"] .game-card { display: contents; }
+  body[data-screen="game"] .table { margin-top: var(--board-pad, 0px); }
+  body[data-screen="game"] #request-banner,
+  body[data-screen="game"] #watchers-note,
+  body[data-screen="game"] #listing-warning,
+  body[data-screen="game"] #btn-copy-watch-game,
+  body[data-screen="game"] .move-strip { order: -1; width: var(--board-size); margin: 0; }
+  body[data-screen="game"] .move-strip {
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 8px; padding: 3px 6px;
+  }
+  body[data-screen="game"] #spectator-banner { order: 3; width: var(--board-size); margin: 0; }
+  body[data-screen="game"] #chat-card { order: 5; width: var(--board-size); }
+  body[data-screen="game"] .board-wrap { order: 0; }
+
+  body[data-screen="puzzle"] .app { padding: 4px 8px 24px; }
+  body[data-screen="puzzle"] .table { gap: 8px; }
+  body[data-screen="puzzle"] .panel { width: var(--board-size); max-width: none; }
+}
+
+/* =====================================================================
+   Game Review — chess.com-style layout
+   ===================================================================== */
+body[data-screen="review"] .titlebar { display: none; }
+.board { position: relative; }
+.board-arrow { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+
+.review-wrap { display: flex; flex-direction: column; gap: 10px; }
+.review-head { display: flex; align-items: center; gap: 8px; width: 100%; }
+.review-head h2 { flex: 1; margin: 0; text-align: center; font-size: 1.25rem; }
+.review-back, .review-head-gap { width: 40px; height: 40px; flex: 0 0 40px; }
+.review-back {
+  background: none; border: none; color: var(--parchment); font-size: 1.6rem; cursor: pointer; border-radius: 10px;
+}
+.review-back:active { background: var(--panel); }
+.review-progress { margin: 8px 0; }
+.progress-track { height: 8px; background: var(--ink); border-radius: 4px; overflow: hidden; border: 1px solid var(--panel-line); }
+.progress-track span { display: block; height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+
+/* Coach + speech bubble */
+.coach-row { display: flex; align-items: flex-end; gap: 8px; }
+.coach-avatar {
+  flex: 0 0 62px; width: 62px; height: 62px; border-radius: 12px 12px 0 0; overflow: hidden;
+  background: #46503c; display: flex; align-items: flex-end;
+}
+.coach-avatar svg { width: 100%; height: 100%; display: block; }
+.coach-bubble.light {
+  position: relative; flex: 1; min-width: 0;
+  background: #f4f4f1; color: #262522; border-radius: 14px; padding: 12px 14px;
+  font-size: 0.95rem; line-height: 1.4;
+}
+.coach-bubble.light::before {
+  content: ""; position: absolute; left: -6px; bottom: 16px; width: 14px; height: 14px;
+  background: #f4f4f1; transform: rotate(45deg); border-radius: 2px;
+}
+.coach-head { display: flex; align-items: center; gap: 8px; }
+.coach-head b { flex: 1; min-width: 0; font-size: 1.05rem; }
+.coach-badge {
+  flex: 0 0 auto; min-width: 28px; height: 28px; padding: 0 5px; border-radius: 14px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 800; font-size: 0.85rem;
+}
+.coach-eval { flex: 0 0 auto; background: #e6e6e1; border-radius: 8px; padding: 4px 10px; font-weight: 700; font-size: 0.95rem; }
+.coach-detail { margin: 6px 0 0; }
+
+/* Summary phase */
+.review-summary { display: flex; flex-direction: column; gap: 12px; }
+.review-graph { display: block; width: 100%; height: 96px; border-radius: 8px; cursor: pointer; }
+.rv-grid, .rv-row { display: grid; grid-template-columns: 30% 1fr 46px 1fr; align-items: center; }
+.rv-pname { text-align: center; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
+.rv-label, .rv-name { font-weight: 700; }
+.acc-box { text-align: center; border-radius: 8px; padding: 10px 0; font-size: 1.6rem; font-weight: 800; margin: 0 6px; }
+.light-box { background: #f1f1ee; color: #262522; }
+.dark-box { background: #4b4847; color: #f1f1ee; }
+.review-opening { margin: 0; text-align: center; min-height: 1em; }
+.rv-table { border-top: 1px solid var(--panel-line); padding-top: 6px; }
+.rv-row { padding: 5px 0; }
+.rv-count { text-align: center; font-size: 1.35rem; }
+.rv-dot {
+  width: 30px; height: 30px; border-radius: 50%; margin: 0 auto; color: #fff;
+  display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.78rem;
+}
+.btn-start {
+  position: sticky; bottom: 12px; width: 100%; padding: 15px; font-size: 1.25rem; font-weight: 800;
+  background: #81b64c; color: #fff; border: none; border-radius: 12px; box-shadow: 0 4px 0 #4f7a2c; cursor: pointer;
+}
+.btn-start:active { transform: translateY(2px); box-shadow: 0 2px 0 #4f7a2c; }
+
+/* Steps phase */
+.review-steps { display: flex; flex-direction: column; gap: 10px; }
+.rv-strip .move-list { max-height: none; }
+.rv-bar { display: flex; align-items: center; gap: 6px; }
+.rv-btn {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: none; border: none; color: var(--parchment-dim); font-size: 0.78rem; font-weight: 700; padding: 6px 2px; cursor: pointer;
+}
+.rv-btn:disabled { opacity: 0.35; }
+.rv-btn.on { color: var(--accent-bright); }
+.rv-glyph { font-size: 1.5rem; line-height: 1; }
+.rv-next {
+  flex: 2.4; padding: 14px 0; font-size: 1.25rem; font-weight: 800; color: #fff; background: #81b64c;
+  border: none; border-radius: 12px; box-shadow: 0 4px 0 #4f7a2c; cursor: pointer;
+}
+.rv-next:active { transform: translateY(2px); box-shadow: 0 2px 0 #4f7a2c; }
+.rv-next:disabled { opacity: 0.4; }
+
+/* Phone: summary hides the board; steps puts the coach above it and the bar
+   fixed at the bottom. The panel's wrappers dissolve so the coach, board,
+   strip and bar can be ordered as siblings (same trick as the game screen). */
+@media (max-width: 899px) {
+  body[data-screen="review"][data-review-phase="summary"] .board-wrap { display: none; }
+  body[data-screen="review"] .app { padding: 4px 10px calc(96px + env(safe-area-inset-bottom, 0px)); }
+  body[data-screen="review"] .panel { width: 100%; max-width: 480px; }
+  body[data-screen="review"][data-review-phase="steps"] .panel,
+  body[data-screen="review"][data-review-phase="steps"] #screen-review,
+  body[data-screen="review"][data-review-phase="steps"] .review-wrap,
+  body[data-screen="review"][data-review-phase="steps"] #review-body,
+  body[data-screen="review"][data-review-phase="steps"] .review-steps { display: contents; }
+  body[data-screen="review"][data-review-phase="steps"] .table { gap: 8px; }
+  body[data-screen="review"][data-review-phase="steps"] .review-head { order: -3; max-width: 480px; }
+  body[data-screen="review"][data-review-phase="steps"] .coach-top { order: -1; width: var(--board-size); }
+  body[data-screen="review"][data-review-phase="steps"] .rv-strip {
+    order: 1; width: var(--board-size);
+    background: var(--panel); border: 1px solid var(--panel-line); border-radius: 8px; padding: 3px 6px;
+  }
+  body[data-screen="review"] .rv-bar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; background: var(--panel);
+    border-top: 1px solid var(--panel-line); padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+}
+body[data-screen="review"] #status { display: none; }
+.review-summary { padding-bottom: 64px; }
+@media (min-width: 900px) { .review-summary { padding-bottom: 0; } .btn-start { position: static; } }
+
+.spectator-banner .controls { flex-wrap: wrap; gap: 6px; }
+.spectator-banner .emoji-bar button { font-size: 1.25rem; }

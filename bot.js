@@ -270,3 +270,100 @@ export function chooseBotMove(game, bot) {
 export function bestMoveHint(game) {
   return chooseBotMove(game, { elo: 0, depth: 4, nodes: 20000, temp: 0, q: 3 });
 }
+
+// Scores EVERY legal move in the position, for post-game review (and the
+// spectator commentary). Unlike chooseBotMove — which prunes clearly-worse
+// moves to save time — every score here comes from a full-window search, so
+// "how much worse was the move that was actually played than the best one"
+// is a real number rather than a bound. Scores are from the side-to-move's
+// point of view (higher = better for whoever is to move) and use the same
+// depth/node-budget iterative deepening as the bots: the list returned is
+// from the deepest iteration that finished inside the budget.
+//
+// Leaves `game`'s position unchanged.
+// Review-only variant of negamax: identical, except that a leaf (depth 0)
+// goes straight to the capture search instead of first generating and sorting
+// every legal move just to check for mate/stalemate. That check is the most
+// expensive part of a leaf, and skipping it roughly doubles how deep the
+// same node budget reaches. Mates are still found one ply earlier, at the
+// parent. Kept separate so the bots' own search (and so their strength
+// ladder) is untouched.
+function negamaxReview(game, depth, alpha, beta, color, ply, S) {
+  if (depth === 0) return qsearch(game, alpha, beta, color, S, S.q);
+  if (S.enforce && S.nodes > S.max) throw new Abort();
+  S.nodes++;
+  const moves = orderedMoves(game);
+  if (moves.length === 0) return game.isCheck() ? -(MATE - ply) : 0;
+  let best = -Infinity;
+  for (const move of moves) {
+    game._makeMove(move);
+    const score = -negamaxReview(game, depth - 1, -beta, -alpha, -color, ply + 1, S);
+    game._undoMove();
+    if (score > best) best = score;
+    if (best > alpha) alpha = best;
+    if (alpha >= beta) break;
+  }
+  return best;
+}
+
+// A move scored this many centipawns below the best one stops being searched
+// exactly (see scoreAllMoves) — it's already a clear blunder by any measure.
+const REVIEW_MARGIN = 400;
+
+export function scoreAllMoves(game, { depth = 4, nodes = 6000, q = 3 } = {}) {
+  const rootMoves = orderedMoves(game);
+  if (rootMoves.length === 0) return { moves: [], depth: 0, nodes: 0 };
+  const rootColor = game.turn() === "w" ? 1 : -1;
+  const startLen = game.history().length;
+  const S = { nodes: 0, max: nodes, enforce: false, q };
+  let lastGood = null;
+  let doneDepth = 0;
+
+  for (let d = 1; d <= depth; d++) {
+    S.enforce = d > 1; // depth 1 always completes, so there's always a result
+    const scored = [];
+    let bestSoFar = -Infinity;
+    try {
+      for (const move of rootMoves) {
+        game._makeMove(move);
+        let score;
+        if (game.isDraw()) {
+          score = 0;
+        } else {
+          // Window around the best score so far: a move that is clearly worse
+          // than it (by more than REVIEW_MARGIN) fails low early and only
+          // reports "at least this much worse", which is all the review needs
+          // to call it a blunder — it doesn't need the exact figure. Moves
+          // inside the window (and any new best) are scored exactly.
+          const lo = bestSoFar === -Infinity ? -Infinity : bestSoFar - REVIEW_MARGIN;
+          score = -negamaxReview(game, d - 1, -Infinity, -lo, -rootColor, 1, S);
+        }
+        game._undoMove();
+        scored.push({ move, score });
+        if (score > bestSoFar) bestSoFar = score;
+      }
+    } catch (e) {
+      if (!(e instanceof Abort)) throw e;
+      while (game.history().length > startLen) game._undoMove();
+      break;
+    }
+    lastGood = scored;
+    doneDepth = d;
+    // Re-order the next iteration best-first so a budget cut still has the
+    // strongest candidates searched.
+    rootMoves.sort((a, b) => {
+      const sa = scored.find((s) => s.move === a).score;
+      const sb = scored.find((s) => s.move === b).score;
+      return sb - sa;
+    });
+    if (S.nodes > S.max) break;
+  }
+
+  const moves = lastGood
+    .map((s) => ({ ...toExternalMove(s.move), score: s.score }))
+    .sort((a, b) => b.score - a.score);
+  return { moves, depth: doneDepth, nodes: S.nodes };
+}
+
+// Score magnitude above which a result means "forced mate" (see MATE above).
+export const MATE_THRESHOLD = MATE - 1000;

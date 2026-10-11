@@ -14,7 +14,11 @@ files.
   will start ("vs Computer · 1000 · White", "Local · 3 | 2"). History and
   Share sit below. Rating, sign-in and the leaderboard live under
   **Account**; lessons under **Learn**.
-- **The game page** is built to fit one phone screen with no scrolling:
+- **Puzzles** have their own button on Home (see *Puzzles* below).
+- **The game page** is built to fit one phone screen with no scrolling. On a
+  phone the move strip sits *above* the board and the board is placed so its
+  middle is the middle of the screen (it only shrinks if a very short screen
+  couldn't otherwise fit everything above and below it):
   opponent bar (with the pieces they've captured) above the board, you
   below it, a horizontal move strip, and the toolbar. The board has no
   border; rank numbers and file letters sit inside the squares in small
@@ -109,6 +113,20 @@ the host ticks "Let others watch this game live" when creating the room.
 - Spectated games aren't saved to the spectator's history or rating.
 - You can also browse back through a game you're watching (‹ ›) without
   losing your place when new moves arrive.
+- **Analysis board:** tap *Analysis board* to try moves for **both** sides on
+  your own copy of the current position. Nothing is sent to the players, and
+  the live game carries on underneath (you're told how many moves you've
+  missed). *Undo test move* steps back; *Back to live* returns.
+- **Emoji reactions** (👏 🔥 👑 😱): a spectator's tap floats up on
+  **spectators' screens only**. It travels spectator → host → *other
+  spectators*; the host never relays it to the opponent and never draws it on
+  their own screen, so the players aren't distracted. The host accepts only
+  those four emojis, rate-limited per spectator.
+- **Voice commentary:** spectators hear short announcements through the
+  browser's speech synthesis — book moves ("e4 is a book move"), brilliant /
+  great moves, mistakes and blunders, check and checkmate — with the same line
+  shown on screen. The 🔊 Voice button turns it off. Commentary uses the
+  built-in engine at a small depth, so treat it as a friendly guide.
 - **If the Watch tab always shows nothing**, check the Firestore rules
   below. The `liveGames` rule must be published, or hosts can't list their
   games and the list can't be read. The app now says so: a host whose
@@ -139,8 +157,66 @@ Everything about your identity now lives under the **Account** tab:
   this is also what fixes the old "username field is empty after signing in
   on my other device" issue: it used to read from local storage only, now
   it fetches your actual saved profile from Firestore on sign-in.
+- **Where a profile lives.** `users/{uid}` is the account's own profile
+  (name, rating, games), keyed by the Firebase uid so the same Google account
+  shows the same username on every device; it's private to the owner.
+  `usernames/{name}` locks the handle (written in the same transaction), and
+  `players/{uid}` is a public copy the leaderboard reads. Older profiles that
+  only exist in `players/` are copied into `users/` the first time they're
+  seen.
+- **The saved profile wins.** On page load, after sign-in, and when the app
+  returns to the foreground, the account's saved name/rating replace this
+  device's cached copy. A device with an out-of-date cache can no longer rename
+  the account when it syncs a rating.
+- **Signing into an existing account from a second device** uses the
+  credential from the first attempt (no second popup, which phones tend to
+  block), and releases the abandoned guest's username and leaderboard row.
 - Without Firebase configured, all of this still works exactly as before —
   purely local, no account, no shared leaderboard.
+
+## Game Review
+
+After a game you played (local, vs computer or online) a **Review** button
+appears in the game toolbar (and a **Game Review** button on any saved game's
+replay). It works in two steps, like chess.com:
+
+1. **Summary** — the coach, the evaluation graph (tap it to jump to a move),
+   each side's accuracy, and how many moves of each kind were played.
+2. **Step through** — the coach's bubble above the board, a badge on the move's
+   square, a green arrow showing the better move after a mistake, the move
+   strip, and **Back / Best / Flip / Voice / Next**.
+
+Every move gets one of ten labels: Brilliant (!!), Great (!), Best (⭐),
+Excellent (👍), Good (✔️), Book (📖), Inaccuracy (?!), Mistake (?), Miss (❌),
+Blunder (??). Mistakes get a plain-words reason where one can be spotted:
+*Hanging Piece, Fork, Fork Missed, Pin, Free Piece Missed, Missed Checkmate,
+Walked into Checkmate*. Openings (Italian Game, London System, Dutch Defense,
+Sicilian Defense and about fifty more lines) come from `openings.js`, which
+also accepts UCI or PGN move text.
+
+- **Flip** is a 180° CSS rotation of the board; pieces, badges and coordinates
+  are turned back upright, and it stays put while you step through moves.
+- **Voice** reads each move note aloud with `speechSynthesis` ("e4 is a book
+  move", "Blunder!"); the 🔊 button turns it off.
+- **How accurate is it?** Moves are scored by the app's own engine (`bot.js`)
+  in a Web Worker — a few moves deep, not Stockfish. Blunders and missed mates
+  are caught reliably; the finer labels (Excellent vs Good, and especially
+  Brilliant and Great, which need a deep look at why a sacrifice works) are
+  approximate, and accuracy won't match chess.com's numbers. `analysis.js`
+  exposes `setEngine()` so a Stockfish build can be dropped in later.
+
+## Puzzles
+
+The **🧩 Puzzles** button on Home opens three puzzle types:
+
+- **Pawn Race** — kings and pawns only; the first to promote a pawn to a queen
+  wins. Play the computer or a friend on the same device.
+- **Knight's Tour** — tap a square to place a knight, then visit every square
+  once; visited squares are numbered. Undo and Restart are available.
+- **Checkmate Puzzles** — filter by *Mate in 1* or *Mate in 2*. The 65 puzzles
+  in `puzzle-data.js` were found in bot-vs-bot games and proven by brute-force
+  search; for mate in 2 any move that really forces mate is accepted, not just
+  the stored one.
 
 ## Look & feel
 
@@ -258,6 +334,9 @@ paste six values into one file. No credit card required.
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
+       match /users/{uid} {
+         allow read, write: if request.auth != null && request.auth.uid == uid;
+       }
        match /players/{uid} {
          allow read: if true;
          allow write: if request.auth != null && request.auth.uid == uid;
@@ -292,7 +371,8 @@ paste six values into one file. No credit card required.
    `openGames` is the Online tab's lobby of rooms waiting for an opponent.
    `liveGames` is the Watch tab's list of games hosts have opted to share
    (only the host who listed a game can change or remove it).
-   `players` holds each account's rating; `usernames` is a separate
+   `users` is the account's private profile; `players` is its public copy for
+   the leaderboard (name, rating); `usernames` is a separate
    lookup collection that's what actually makes usernames unique — claiming
    one writes a `usernames/<lowercased-name>` doc, and the rules above only
    let you create/change/delete an entry that's already yours, so nobody
@@ -378,7 +458,14 @@ style.css         Visual design
 main.js           Screens, board rendering, move handling, game state
 multiplayer.js    Thin wrapper around PeerJS for the online room
 clock.js          Per-player countdown clock
-bot.js            Offline computer opponent (minimax + alpha-beta)
+bot.js            Offline computer opponent (minimax + alpha-beta); also scores every move for review
+analysis.js       Game Review engine: move labels, accuracy, kid-friendly reasons, coach text
+analysis-worker.js  Runs the analysis off the main thread
+openings.js       Opening names and "still in book" check (SAN / UCI / PGN)
+review.js         Game Review screens (summary + step-through)
+voice.js          Spoken commentary (speechSynthesis)
+puzzles.js        Pawn Race, Knight's Tour and Checkmate puzzles
+puzzle-data.js    The verified mate-in-1 / mate-in-2 positions
 sound.js          Synthesized move/capture/check/game-end sound effects
 storage.js        localStorage helpers (resume, history, profile/rating)
 leaderboard.js    Optional shared leaderboard (Firebase Firestore)
@@ -423,5 +510,5 @@ all the sizes for you directly.
   corporate/school network can sometimes block WebRTC.
 - If your friend closes the tab, the game ends — there's no reconnect or
   saved-game state (by design, to keep this a small, serverless project).
-- There's no built-in computer opponent — this is built for playing against
-  a person, locally or online.
+- Game Review and spectator commentary use the built-in engine, not Stockfish
+  (see *Game Review* above for what that means for accuracy).

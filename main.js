@@ -32,6 +32,10 @@ import {
   getFirestoreErrorCode,
 } from "./leaderboard.js";
 import { chooseBotMove, TIERS } from "./bot.js";
+import { createReview } from "./review.js";
+import { createPuzzles } from "./puzzles.js";
+import { createLiveAnalyzer, stopAnalysis, CLASS_INFO } from "./analysis.js";
+import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported } from "./voice.js";
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
 const PEER_PREFIX = "oakwood-chess-";
@@ -105,6 +109,12 @@ let lobbyListed = false; // host only: is this room listed in the Online lobby?
 let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "local"
 let reviewPly = null; // null = the live position; a number = browsing earlier moves
 let reviewLastMove = null;
+let boardHook = null; // set while the Review / Puzzle screens draw the board (see renderBoard)
+let reviewReturn = "game"; // screen to go back to when Game Review is closed
+let specAnalysis = null; // spectator's private analysis board: { game, last } or null
+let specNewMoves = 0; // live moves that arrived while the spectator was on their analysis board
+let hydratedUid = null; // account whose cloud profile this page has already loaded
+let authBusy = false; // a sign-in flow is running and will sync the profile itself
 let guardActive = false; // is our extra browser-history entry in place?
 let ignorePop = false;
 const reviewGame = new Chess(); // scratch board used while browsing history
@@ -119,12 +129,15 @@ function showScreen(name) {
   viewState = name;
   document.body.dataset.screen = name; // lets CSS adapt the layout per screen
   if (name !== "game") exitReview();
-  ["home", "room", "setup", "game", "replay", "learn", "account", "watch"].forEach((s) =>
+  ["home", "room", "setup", "game", "replay", "learn", "account", "watch", "review", "puzzles", "puzzle"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
-  const boardVisible = name === "game" || name === "replay" || name === "setup";
+  const boardVisible =
+    name === "game" || name === "replay" || name === "setup" || name === "review" || name === "puzzle";
   el("board-wrap").classList.toggle("hidden", !boardVisible);
-  el("bottom-nav").classList.toggle("hidden", name === "game");
+  el("bottom-nav").classList.toggle("hidden", name === "game" || name === "review" || name === "puzzle");
+  boardHook = name === "review" ? review.hook : name === "puzzle" ? puzzles.hook : null;
+  scheduleLayout();
   // Credits and the "runs in your browser" note belong on the home page
   // only — during play they just take up space.
   el("app-footer").classList.toggle("hidden", name !== "home");
@@ -135,6 +148,7 @@ function showScreen(name) {
 
 function activeGame() {
   if (viewState === "replay") return replayGame;
+  if (viewState === "game" && mode === "spectate" && specAnalysis) return specAnalysis.game;
   if (viewState === "game" && reviewPly !== null) return reviewGame;
   return game;
 }
@@ -169,26 +183,368 @@ function goToPly(ply) {
 
 function render() {
   renderBoard();
-  if (viewState === "replay") return;
+  if (viewState === "replay" || viewState === "review" || viewState === "puzzle") return;
   renderMoveList();
   renderCapturedTray();
   renderStatus();
   finalizeIfOver();
+  updateReviewButton();
+  scheduleLayout();
 }
 
-function renderBoard() {
-  const g = activeGame();
-  boardEl.innerHTML = "";
-  const boardState = g.board();
+// ---------- Game Review, Puzzles and spectator extras ----------
 
-  const rowOrder = flipped ? [...boardState].reverse() : boardState;
+const review = createReview({ rerender: renderBoard, onClose: closeReview });
+const puzzles = createPuzzles({
+  rerender: renderBoard,
+  onLeave: () => {
+    puzzles.stop();
+    showScreen("puzzles");
+  },
+});
+const liveAnalyzer = createLiveAnalyzer(announceLive);
+let replayEntry = null; // the history entry currently open in Replay
+
+// --- Game Review ---
+
+// The toolbar's Review button appears once a game you played has finished.
+function updateReviewButton() {
+  const ok = viewState === "game" && !!mode && mode !== "spectate" && gameRecorded && game.history().length >= 2;
+  el("btn-review").classList.toggle("hidden", !ok);
+}
+
+function reviewSetup(source) {
+  if (source === "replay") {
+    const t = new Chess();
+    t.loadPgn(replayEntry.pgn);
+    return {
+      moves: t.history({ verbose: true }),
+      startFen: t.header().FEN || null,
+      whiteName: "White",
+      blackName: "Black",
+      orientation: "w",
+    };
+  }
+  const you = getProfile().name || "You";
+  let whiteName = "White";
+  let blackName = "Black";
+  if (mode === "online") {
+    whiteName = myColor === "w" ? you : opponentName;
+    blackName = myColor === "w" ? opponentName : you;
+  } else if (mode === "bot") {
+    const bot = `Bot (${botElo})`;
+    whiteName = myColor === "w" ? you : bot;
+    blackName = myColor === "w" ? bot : you;
+  }
+  return {
+    moves: game.history({ verbose: true }),
+    startFen: game.header().FEN || null,
+    whiteName,
+    blackName,
+    orientation: mode === "online" || mode === "bot" ? myColor : "w",
+  };
+}
+
+function openGameReview(source) {
+  reviewReturn = source;
+  const setup = reviewSetup(source);
+  showScreen("review");
+  review.open(setup);
+}
+
+function closeReview() {
+  showScreen(reviewReturn);
+  render();
+}
+
+el("btn-review").addEventListener("click", () => openGameReview("game"));
+el("btn-replay-review").addEventListener("click", () => openGameReview("replay"));
+
+// --- Puzzles ---
+
+el("btn-open-puzzles").addEventListener("click", () => showScreen("puzzles"));
+el("btn-puzzles-back").addEventListener("click", goHome);
+document.querySelectorAll(".puzzle-tile").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    showScreen("puzzle");
+    puzzles.start(btn.dataset.puzzle);
+  });
+});
+
+// Called whenever we leave to Home: stop anything running in the background.
+function stopExtras() {
+  puzzles.stop();
+  review.abort();
+  stopAnalysis();
+  stopSpeaking();
+  liveAnalyzer.stop();
+  specAnalysis = null;
+  specNewMoves = 0;
+}
+
+// --- Spectator: private analysis board ---
+//
+// A spectator can try moves for BOTH sides on their own copy of the position.
+// Nothing here touches `game` or `room` — spectators never send moves, and the
+// live game keeps updating underneath so they can jump back to it.
+
+function updateSpectatorControls() {
+  const on = mode === "spectate";
+  el("btn-spec-analysis").classList.toggle("hidden", !on || !!specAnalysis);
+  el("btn-spec-undo").classList.toggle("hidden", !on || !specAnalysis);
+  el("btn-spec-live").classList.toggle("hidden", !on || !specAnalysis);
+  const note = el("spec-new-moves");
+  note.classList.toggle("hidden", !(on && specAnalysis));
+  if (specAnalysis) {
+    note.textContent =
+      specNewMoves > 0
+        ? `Analysis board — only you can see these moves. The live game has ${specNewMoves} new move${specNewMoves === 1 ? "" : "s"}.`
+        : "Analysis board — only you can see these moves. The live game carries on.";
+  }
+  el("btn-spec-voice").textContent = isVoiceEnabled() ? "🔊 Voice" : "🔇 Voice";
+  el("btn-spec-voice").classList.toggle("hidden", !on || !voiceSupported());
+}
+
+function startSpecAnalysis() {
+  if (mode !== "spectate") return;
+  const fen = reviewPly !== null ? reviewGame.fen() : game.fen();
+  specAnalysis = { game: new Chess(fen), last: null };
+  specNewMoves = 0;
+  selected = null;
+  legalTargets = [];
+  updateSpectatorControls();
+  render();
+}
+
+function leaveSpecAnalysis() {
+  specAnalysis = null;
+  specNewMoves = 0;
+  selected = null;
+  legalTargets = [];
+  updateSpectatorControls();
+  render();
+}
+
+function onSpecAnalysisClick(square) {
+  if (viewState !== "game" || mode !== "spectate" || !specAnalysis) return;
+  const g = specAnalysis.game;
+  if (selected) {
+    const move = legalTargets.find((m) => m.to === square);
+    if (move) {
+      const made = g.move({ from: selected, to: square, promotion: move.promotion ? "q" : undefined });
+      specAnalysis.last = { from: made.from, to: made.to };
+      playMoveSound(made);
+      selected = null;
+      legalTargets = [];
+      render();
+      return;
+    }
+  }
+  const piece = g.get(square);
+  if (piece && piece.color === g.turn()) {
+    selected = square;
+    legalTargets = g.moves({ square, verbose: true });
+  } else {
+    selected = null;
+    legalTargets = [];
+  }
+  render();
+}
+
+el("btn-spec-analysis").addEventListener("click", startSpecAnalysis);
+el("btn-spec-live").addEventListener("click", leaveSpecAnalysis);
+el("btn-spec-undo").addEventListener("click", () => {
+  if (!specAnalysis) return;
+  specAnalysis.game.undo();
+  const h = specAnalysis.game.history({ verbose: true });
+  specAnalysis.last = h.length ? { from: h[h.length - 1].from, to: h[h.length - 1].to } : null;
+  selected = null;
+  legalTargets = [];
+  render();
+});
+el("btn-spec-voice").addEventListener("click", () => {
+  setVoiceEnabled(!isVoiceEnabled());
+  updateSpectatorControls();
+});
+
+// --- Spectator: floating emojis (seen by spectators only) ---
+//
+// A spectator's tap travels to the host, and the host forwards it to the OTHER
+// spectators only (multiplayer.js) — never to the two players, and the host's
+// own screen never draws it.
+
+const SPEC_EMOJIS = ["👏", "🔥", "👑", "😱"];
+let lastEmojiAt = 0;
+
+function floatEmoji(emoji) {
+  if (!SPEC_EMOJIS.includes(emoji)) return;
+  const layer = el("emoji-layer");
+  const span = document.createElement("span");
+  span.className = "float-emoji";
+  span.textContent = emoji;
+  span.style.left = `${8 + Math.random() * 78}%`;
+  span.addEventListener("animationend", () => span.remove());
+  layer.appendChild(span);
+  setTimeout(() => span.remove(), 3000); // in case animations are disabled
+}
+
+el("emoji-bar").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-emoji]");
+  if (!btn || mode !== "spectate") return;
+  const now = Date.now();
+  if (now - lastEmojiAt < 300) return; // a gentle rate limit
+  lastEmojiAt = now;
+  floatEmoji(btn.dataset.emoji);
+  if (room) room.sendEmoji(btn.dataset.emoji);
+});
+
+// --- Spectator: live voice commentary ---
+
+function announceLive(result) {
+  if (mode !== "spectate") return;
+  const cls = result.cls;
+  let say = "";
+  let text = "";
+  if (result.san.endsWith("#")) {
+    say = "Checkmate!";
+    text = `${result.san} — checkmate!`;
+  } else if (["book", "brilliant", "great", "blunder", "mistake", "miss"].includes(cls)) {
+    say = result.speech;
+    text = `${result.san} — ${CLASS_INFO[cls].label}${cls === "book" && result.opening ? ` (${result.opening})` : ""}`;
+  } else if (result.san.endsWith("+")) {
+    say = "Check.";
+    text = `${result.san} — check`;
+  }
+  if (!text) return;
+  const box = el("spec-commentary");
+  box.textContent = text;
+  box.classList.remove("hidden");
+  speak(say);
+}
+
+// --- Keeping the board centred on phones ---
+//
+// On a phone the board is sized AND placed so its middle is the middle of the
+// screen. Everything above it (header, move strip, opponent bar) and below it
+// (status, your bar, the fixed toolbar) is measured; the board takes whatever
+// size lets both fit, and a top margin balances the two sides. If the screen is
+// too short for both at full width the board shrinks to fit rather than sit off
+// centre. Desktop and the other screens keep the plain CSS sizing.
+
+let layoutRaf = 0;
+function scheduleLayout() {
+  if (layoutRaf) return;
+  layoutRaf = requestAnimationFrame(() => {
+    layoutRaf = 0;
+    layoutBoard();
+  });
+}
+
+function layoutBoard() {
+  const root = document.documentElement;
+  const mobile = window.matchMedia("(max-width: 899px)").matches;
+  // Spectators get the plain full-width board: their controls sit below it and
+  // would otherwise force the board smaller just to stay centred.
+  if (!mobile || viewState !== "game" || mode === "spectate") {
+    root.style.removeProperty("--board-size");
+    root.style.removeProperty("--board-pad");
+    return;
+  }
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return; // keyboard is open
+  const vh = window.innerHeight;
+  const maxW = Math.min(window.innerWidth - 16, 640);
+  root.style.setProperty("--board-pad", "0px");
+  root.style.setProperty("--board-size", `${maxW}px`);
+  const b = boardEl.getBoundingClientRect();
+  const wrap = el("board-wrap").getBoundingClientRect();
+  const above = b.top + window.scrollY;
+  const below = wrap.bottom - b.bottom + el("game-controls").offsetHeight + 6;
+  const fit = vh - 2 * Math.max(above, below);
+  const size = Math.floor(Math.max(Math.min(maxW, fit), Math.min(maxW, 200)));
+  const pad = Math.max(0, Math.round((vh - size) / 2 - above));
+  root.style.setProperty("--board-size", `${size}px`);
+  root.style.setProperty("--board-pad", `${pad}px`);
+  // Check against where the board really landed (fonts, safe areas and the
+  // like can shift things by a few pixels after the estimate) and nudge the
+  // margin until its middle is the middle of the screen.
+  let applied = pad;
+  for (let i = 0; i < 3; i++) {
+    const r = boardEl.getBoundingClientRect();
+    const err = vh / 2 - (r.top + r.height / 2);
+    if (Math.abs(err) < 0.5 || applied + err < 0) break;
+    applied = Math.round(applied + err);
+    root.style.setProperty("--board-pad", `${applied}px`);
+  }
+}
+
+window.addEventListener("resize", scheduleLayout);
+window.addEventListener("orientationchange", scheduleLayout);
+
+// --- Keeping the account's profile in step across devices ---
+
+// Saves the profile to the account and adopts whatever name the account really
+// has (it may differ from this device's cached copy).
+async function syncProfileToCloud(profile) {
+  const res = await pushProfile(profile);
+  if (res && res.ok && res.name && res.name !== getProfile().name) {
+    saveProfile({ ...getProfile(), name: res.name });
+    if (viewState === "account") renderProfile();
+  }
+  return res;
+}
+
+// The account's saved profile (users/{uid}) is the source of truth: whenever
+// we learn who is signed in — on page load, after sign-in, or when the app
+// comes back to the foreground — load it over this device's cached copy.
+async function hydrateProfileFromCloud({ force = false } = {}) {
+  const user = getCurrentUser();
+  if (!isConfigured() || !user) return;
+  if (!force && hydratedUid === user.uid) return;
+  hydratedUid = user.uid;
+  const cloud = await fetchMyProfile();
+  if (cloud && cloud.name) {
+    saveProfile({ name: cloud.name, rating: cloud.rating ?? 1200, games: cloud.games ?? 0 });
+  } else {
+    const local = getProfile();
+    if (local.name) await syncProfileToCloud(local);
+  }
+  if (viewState === "account") {
+    renderProfile();
+    renderLeaderboard();
+  }
+}
+
+let lastForegroundSync = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || authBusy) return;
+  if (Date.now() - lastForegroundSync < 60000) return;
+  lastForegroundSync = Date.now();
+  hydrateProfileFromCloud({ force: true });
+});
+
+// The board is drawn from one of three sources: the live game (default), or,
+// on the Review and Puzzle screens, a "hook" object from review.js /
+// puzzles.js describing the position, highlights, badges and what a tap does.
+function renderBoard() {
+  const hook = viewState === "review" || viewState === "puzzle" ? boardHook : null;
+  const g = hook ? hook.game : activeGame();
+  boardEl.innerHTML = "";
+  // Review flips with a CSS rotation (pieces and labels are turned back
+  // upright by the stylesheet), so stepping through moves never changes it.
+  const cssFlip = !!(hook && hook.cssFlip);
+  boardEl.classList.toggle("css-flip", cssFlip);
+  const boardState = (hook && hook.cells && hook.cells()) || g.board();
+  const useFlip = hook ? !!hook.flipped : flipped;
+
+  const rowOrder = useFlip ? [...boardState].reverse() : boardState;
   for (let r = 0; r < 8; r++) {
     const row = rowOrder[r];
-    const cols = flipped ? [...row].reverse() : row;
+    const cols = useFlip ? [...row].reverse() : row;
     for (let c = 0; c < 8; c++) {
       const cell = cols[c];
-      const rankIndex = flipped ? r : 7 - r;
-      const fileIndex = flipped ? 7 - c : c;
+      const rankIndex = useFlip ? r : 7 - r;
+      const fileIndex = useFlip ? 7 - c : c;
       const square = "abcdefgh"[fileIndex] + (rankIndex + 1);
 
       const sq = document.createElement("div");
@@ -200,42 +556,107 @@ function renderBoard() {
       }
       // Rank numbers down the left edge, file letters along the bottom,
       // drawn inside the squares in small type (chess.com / lichess style).
-      if (c === 0) {
+      // With the CSS flip they go on the opposite edges of the unrotated
+      // grid, which is where the left/bottom edges end up after rotating.
+      if (cssFlip ? c === 7 : c === 0) {
         const rk = document.createElement("span");
         rk.className = "coord rank";
         rk.textContent = String(rankIndex + 1);
         sq.appendChild(rk);
       }
-      if (r === 7) {
+      if (cssFlip ? r === 0 : r === 7) {
         const fl = document.createElement("span");
         fl.className = "coord file";
         fl.textContent = "abcdefgh"[fileIndex];
         sq.appendChild(fl);
       }
 
-      if (viewState === "game") {
+      if (hook) {
+        for (const cls of (hook.classes && hook.classes(square)) || []) sq.classList.add(cls);
+        const label = hook.label && hook.label(square);
+        if (label) {
+          const lb = document.createElement("span");
+          lb.className = "sq-label";
+          lb.textContent = label;
+          sq.appendChild(lb);
+        }
+        const badge = hook.badge && hook.badge(square);
+        if (badge) {
+          const b = document.createElement("span");
+          b.className = "move-badge";
+          b.style.background = badge.color;
+          b.textContent = badge.mark;
+          b.title = badge.label || "";
+          sq.appendChild(b);
+        }
+        if (hook.onSquare) sq.addEventListener("click", () => hook.onSquare(square));
+      } else if (viewState === "game") {
         if (selected === square) sq.classList.add("selected");
         const legal = legalTargets.find((m) => m.to === square);
         if (legal) {
           sq.classList.add("legal");
           if (legal.captured || legal.flags?.includes("e")) sq.classList.add("capture");
         }
-        sq.addEventListener("click", () => onSquareClick(square));
+        sq.addEventListener("click", () => (mode === "spectate" ? onSpecAnalysisClick(square) : onSquareClick(square)));
       } else if (viewState === "setup") {
         sq.addEventListener("click", () => onSetupSquareClick(square));
       }
 
-      const lm = viewState === "game" && reviewPly !== null ? reviewLastMove : lastMove;
-      if (lm && (lm.from === square || lm.to === square)) {
-        sq.classList.add("last-move");
+      if (!hook) {
+        const lm = specAnalysis ? specAnalysis.last : viewState === "game" && reviewPly !== null ? reviewLastMove : lastMove;
+        if (lm && (lm.from === square || lm.to === square)) {
+          sq.classList.add("last-move");
+        }
       }
-      if (cell && cell.type === "k" && cell.color === g.turn() && g.inCheck()) {
+      if (cell && cell.type === "k" && !(hook && hook.noCheck) && cell.color === g.turn() && g.inCheck()) {
         sq.classList.add("in-check");
       }
 
       boardEl.appendChild(sq);
     }
   }
+
+  // Best-move arrow (Game Review): drawn in the board's own coordinates, so
+  // the CSS flip turns it along with the squares.
+  const arrow = hook && hook.arrow && hook.arrow();
+  if (arrow) boardEl.appendChild(arrowElement(arrow, useFlip));
+}
+
+function arrowElement({ from, to }, reversed) {
+  const ns = "http://www.w3.org/2000/svg";
+  const pt = (sq) => {
+    const f = sq.charCodeAt(0) - 97;
+    const r = Number(sq[1]) - 1;
+    return reversed ? [7 - f + 0.5, r + 0.5] : [f + 0.5, 7 - r + 0.5];
+  };
+  const [x1, y1] = pt(from);
+  const [x2, y2] = pt(to);
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const head = 0.62;
+  const bx = x2 - ux * head;
+  const by = y2 - uy * head;
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 8 8");
+  svg.setAttribute("class", "board-arrow");
+  const line = document.createElementNS(ns, "line");
+  line.setAttribute("x1", x1 + ux * 0.2);
+  line.setAttribute("y1", y1 + uy * 0.2);
+  line.setAttribute("x2", bx);
+  line.setAttribute("y2", by);
+  line.setAttribute("stroke", "rgba(129,182,76,0.85)");
+  line.setAttribute("stroke-width", "0.22");
+  const tri = document.createElementNS(ns, "polygon");
+  tri.setAttribute(
+    "points",
+    `${x2},${y2} ${bx - uy * 0.34},${by + ux * 0.34} ${bx + uy * 0.34},${by - ux * 0.34}`
+  );
+  tri.setAttribute("fill", "rgba(129,182,76,0.85)");
+  svg.append(line, tri);
+  return svg;
 }
 
 // A small piece icon (same SVG sprite as the board) for use in the move
@@ -573,6 +994,10 @@ function resetTransientState() {
   el("request-banner").classList.add("hidden");
   el("btn-undo").disabled = false;
   el("btn-rematch").disabled = false;
+  specAnalysis = null;
+  specNewMoves = 0;
+  liveAnalyzer.stop();
+  el("spec-commentary").classList.add("hidden");
   // Undo the spectator-specific UI tweaks so the next game starts clean.
   el("btn-undo").classList.remove("hidden");
   el("spectator-banner").classList.add("hidden");
@@ -876,6 +1301,7 @@ function beginSpectating() {
   el("btn-rematch").classList.add("hidden");
   el("btn-undo").classList.add("hidden");
   el("spectator-banner").classList.remove("hidden");
+  updateSpectatorControls();
   el("chat-card").classList.remove("hidden");
   el("chat-form").classList.add("hidden"); // spectators can read chat, not send
   el("chat-list").innerHTML = "";
@@ -910,12 +1336,38 @@ function handleSpectatorData(data) {
       const hist = game.history({ verbose: true });
       lastMove = hist.length ? { from: hist[hist.length - 1].from, to: hist[hist.length - 1].to } : null;
       exitReview();
+      specAnalysis = null;
+      specNewMoves = 0;
+      liveAnalyzer.reset(game.fen());
       beginSpectating();
       break;
     }
-    case "move":
+    case "move": {
+      const before = game.fen();
+      const count = game.history().length;
+      handlePeerData(data);
+      const hist = game.history({ verbose: true });
+      if (hist.length > count) {
+        if (specAnalysis) {
+          specNewMoves += 1;
+          updateSpectatorControls();
+        }
+        liveAnalyzer.moved(
+          hist[hist.length - 1],
+          hist.map((m) => m.san),
+          before,
+          game.fen(),
+          customStartFen
+        );
+      }
+      break;
+    }
     case "undo-accept":
       handlePeerData(data);
+      liveAnalyzer.reset(game.fen());
+      break;
+    case "spectator-emoji":
+      floatEmoji(data.e);
       break;
     case "resign": {
       const who = data._from === "host" ? spectateHostName : spectateGuestName;
@@ -941,6 +1393,7 @@ function handleSpectatorData(data) {
       selected = null;
       legalTargets = [];
       lastMove = null;
+      liveAnalyzer.reset(game.fen());
       updateSideLabels();
       render();
       break;
@@ -1036,7 +1489,7 @@ function endGame(text, outcome = null) {
     const after = Math.round(before + ELO_K * (score - expected));
     const updatedProfile = { ...profile, rating: after, games: profile.games + 1 };
     saveProfile(updatedProfile);
-    pushProfile(updatedProfile);
+    syncProfileToCloud(updatedProfile);
     ratingInfo = { before, after };
     statusEl.textContent += ` (Rating ${before} → ${after}, ${after - before >= 0 ? "+" : ""}${after - before})`;
     endText = statusEl.textContent;
@@ -1224,8 +1677,9 @@ async function afterSignIn() {
   el("auth-password").value = "";
   const typedName = el("profile-name").value.trim().slice(0, 24);
 
+  hydratedUid = getCurrentUser()?.uid || hydratedUid;
   const existing = await fetchMyProfile();
-  if (existing) {
+  if (existing && existing.name) {
     // A returning account — its saved profile is the source of truth,
     // regardless of whatever happens to be cached on this device.
     saveProfile({ name: existing.name || "", rating: existing.rating ?? 1200, games: existing.games ?? 0 });
@@ -1246,7 +1700,7 @@ async function afterSignIn() {
         showNameError(`Signed in, but couldn't claim that username: ${res.error}`);
       }
     }
-    pushProfile(getProfile());
+    await syncProfileToCloud({ ...getProfile(), ...(existing ? { rating: existing.rating ?? 1200, games: existing.games ?? 0 } : {}) });
   }
   renderAccountCard();
   renderProfile();
@@ -1255,12 +1709,18 @@ async function afterSignIn() {
 
 el("btn-google-signin").addEventListener("click", async () => {
   hideAuthError();
+  authBusy = true; // afterSignIn() syncs the profile itself
   const res = await signInWithGoogle();
   if (!res.ok) {
+    authBusy = false;
     showAuthError(res.error);
     return;
   }
-  await afterSignIn();
+  try {
+    await afterSignIn();
+  } finally {
+    authBusy = false;
+  }
 });
 
 el("btn-email-signin").addEventListener("click", async () => {
@@ -1271,12 +1731,18 @@ el("btn-email-signin").addEventListener("click", async () => {
     showAuthError("Enter your email and password.");
     return;
   }
+  authBusy = true; // afterSignIn() syncs the profile itself
   const res = await signInWithEmail(email, password);
   if (!res.ok) {
+    authBusy = false;
     showAuthError(res.error);
     return;
   }
-  await afterSignIn();
+  try {
+    await afterSignIn();
+  } finally {
+    authBusy = false;
+  }
 });
 
 el("btn-email-signup").addEventListener("click", async () => {
@@ -1287,12 +1753,18 @@ el("btn-email-signup").addEventListener("click", async () => {
     showAuthError("Enter an email and password.");
     return;
   }
+  authBusy = true; // afterSignIn() syncs the profile itself
   const res = await signUpWithEmail(email, password);
   if (!res.ok) {
+    authBusy = false;
     showAuthError(res.error);
     return;
   }
-  await afterSignIn();
+  try {
+    await afterSignIn();
+  } finally {
+    authBusy = false;
+  }
 });
 
 el("btn-signout").addEventListener("click", async () => {
@@ -1470,7 +1942,12 @@ el("profile-name").addEventListener("change", async () => {
     return;
   }
   if (isConfigured()) {
+    const uidAtStart = getCurrentUser()?.uid;
     const res = await claimUsername(newName);
+    // If a sign-in switched accounts while that was running (typing a name and
+    // then tapping "Sign in" fires this handler), the sign-in owns the profile
+    // now — don't write this name over the account's real one.
+    if (authBusy || getCurrentUser()?.uid !== uidAtStart) return;
     if (!res.ok) {
       showNameError(res.error);
       renderProfile(); // revert the field to the last saved name
@@ -1480,7 +1957,7 @@ el("profile-name").addEventListener("change", async () => {
   const profile = getProfile();
   profile.name = newName;
   saveProfile(profile);
-  pushProfile(profile);
+  syncProfileToCloud(profile);
   renderLeaderboard();
 });
 
@@ -1780,6 +2257,7 @@ function renderHistoryList() {
 // ---------- Replay ----------
 
 function openReplay(entry) {
+  replayEntry = entry;
   const temp = new Chess();
   temp.loadPgn(entry.pgn);
   const moves = temp.history({ verbose: true });
@@ -1875,6 +2353,7 @@ function leaveToHome() {
   delistLiveGame();
   delistOpenGame();
   exitReview();
+  stopExtras();
   mode = null;
   room = null;
   if (clock) clock.stop();
@@ -2123,6 +2602,7 @@ el("btn-welcome-guest").addEventListener("click", () => {
 // Keep the account screen in sync if auth state changes asynchronously
 // (e.g. a popup sign-in completing) without another explicit re-render call.
 onAuthChange(() => {
+  if (!authBusy) hydrateProfileFromCloud();
   if (viewState === "account") {
     renderAccountCard();
     renderProfile();

@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v6";
+const CACHE_NAME = "oakwood-chess-v7";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -10,6 +10,13 @@ const APP_SHELL = [
   "./leaderboard.js",
   "./firebase-config.js",
   "./bot.js",
+  "./analysis.js",
+  "./analysis-worker.js",
+  "./openings.js",
+  "./review.js",
+  "./voice.js",
+  "./puzzles.js",
+  "./puzzle-data.js",
   "./sound.js",
   "./manifest.json",
   "./vendor/chess.js",
