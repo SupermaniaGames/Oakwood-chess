@@ -237,8 +237,14 @@
           <div id="captured-them" class="captured-tray"></div>
         </div>
 
-        <div id="board" class="board" aria-label="Chess board"></div>
-        <div id="emoji-layer" class="emoji-layer" aria-hidden="true"></div>
+        <div class="board-stage">
+          <div id="eval-bar" class="eval-bar hidden" aria-hidden="true">
+            <div id="eval-bar-fill" class="eval-bar-fill"></div>
+            <span id="eval-bar-score" class="eval-bar-score">0.0</span>
+          </div>
+          <div id="board" class="board" aria-label="Chess board"></div>
+          <div id="emoji-layer" class="emoji-layer" aria-hidden="true"></div>
+        </div>
 
         <div id="status" class="status">&nbsp;</div>
 
@@ -384,6 +390,7 @@
               <button id="btn-copy" class="btn btn-small">Copy</button>
             </div>
             <p id="conn-state" class="conn-state">Waiting for your friend to join&hellip;</p>
+            <button id="btn-room-retry" class="btn btn-primary btn-small hidden" style="margin-top:8px;">Try again</button>
             <button id="btn-cancel-room" class="btn btn-ghost btn-small">Back to home</button>
           </div>
         </div>
@@ -480,7 +487,7 @@
             <div class="review-head">
               <button id="btn-review-close" class="review-back" aria-label="Back">&#8592;</button>
               <h2>Game Review</h2>
-              <span class="review-head-gap"></span>
+              <button id="btn-review-settings" class="review-back" aria-label="Analysis options">&#9881;</button>
             </div>
 
             <div id="review-progress" class="review-progress hidden">
@@ -499,8 +506,10 @@
                 <canvas id="review-graph" class="review-graph" aria-label="Evaluation graph"></canvas>
                 <div class="rv-grid rv-players"><span></span><div id="review-white-name" class="rv-pname">White</div><span></span><div id="review-black-name" class="rv-pname">Black</div></div>
                 <div class="rv-grid rv-accrow"><span class="rv-label">Accuracy</span><div id="acc-w" class="acc-box light-box">–</div><span></span><div id="acc-b" class="acc-box dark-box">–</div></div>
+                <div id="review-extra" class="rv-extra"></div>
                 <p id="review-opening" class="muted review-opening"></p>
                 <div id="review-table" class="rv-table"></div>
+                <p id="review-engine-note" class="muted review-opening"></p>
                 <button id="btn-review-start" class="btn btn-start">Start Review</button>
               </div>
 
@@ -522,10 +531,11 @@
                   <ol id="review-move-list" class="move-list"></ol>
                   <button id="btn-mv-rnext" class="strip-btn" aria-label="Next move">&#8250;</button>
                 </div>
+                <div id="review-lines" class="review-lines hidden"></div>
                 <div class="rv-bar">
                   <button id="btn-review-prev" class="rv-btn"><span class="rv-glyph">&#8249;</span><span>Back</span></button>
+                  <button id="btn-review-retry" class="rv-btn"><span class="rv-glyph">&#8635;</span><span>Retry</span></button>
                   <button id="btn-review-best" class="rv-btn"><span class="rv-glyph">★</span><span>Best</span></button>
-                  <button id="btn-review-flip" class="rv-btn"><span class="rv-glyph">⇅</span><span>Flip</span></button>
                   <button id="btn-review-voice" class="rv-btn" aria-pressed="true"><span class="rv-glyph">🔊</span><span>Voice</span></button>
                   <button id="btn-review-next" class="rv-next">Next</button>
                 </div>
@@ -534,10 +544,21 @@
           </div>
         </div>
 
+        <!-- Game Review options (opened from the gear) -->
+        <div id="review-settings" class="rv-settings hidden" role="dialog" aria-modal="true" aria-labelledby="rv-settings-title">
+          <div class="review-head">
+            <button id="btn-settings-back" class="review-back" aria-label="Back">&#8592;</button>
+            <h2 id="rv-settings-title">Analysis</h2>
+            <span class="review-head-gap"></span>
+          </div>
+          <div id="rv-settings-list" class="rv-settings-list"></div>
+        </div>
+
         <!-- PUZZLES MENU -->
         <div id="screen-puzzles" class="screen hidden">
           <div class="card">
             <h2>Puzzles</h2>
+            <p id="puzzles-left" class="muted puzzles-left"></p>
             <div class="puzzle-menu">
               <button class="puzzle-tile" data-puzzle="pawnrace">
                 <span class="pz-ico" aria-hidden="true">♟</span>
@@ -563,6 +584,7 @@
             <p id="pz-hint" class="muted"></p>
             <div id="pz-options" class="chip-row hidden"></div>
             <p id="pz-status" class="pz-status" role="status" aria-live="polite"></p>
+            <p id="pz-left" class="muted puzzles-left"></p>
             <div class="controls">
               <button id="pz-undo" class="btn btn-ghost btn-small hidden">Undo</button>
               <button id="pz-restart" class="btn btn-ghost btn-small hidden">Restart</button>
@@ -661,7 +683,8 @@
             </div>
 
             <div id="account-signed-in" class="hidden">
-              <p class="muted" id="account-label" style="margin-bottom:10px;"></p>
+              <p class="muted" id="account-label" style="margin-bottom:4px;"></p>
+              <p class="muted" id="account-id" style="font-size:0.8rem;margin:0 0 10px;"></p>
               <button id="btn-signout" class="btn btn-ghost btn-small">Sign out</button>
             </div>
           </div>
@@ -698,6 +721,17 @@
             <h3>ChessBase India</h3>
             <p class="muted">News and coverage of Indian and international chess.</p>
           </a>
+        </div>
+
+        <div id="exit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="exit-title">
+          <div class="modal-card">
+            <h3 id="exit-title">Exit Oakwood Chess?</h3>
+            <p class="muted">Your saved games and settings stay on this device.</p>
+            <div class="controls">
+              <button id="btn-exit-stay" class="btn btn-primary">Stay</button>
+              <button id="btn-exit-leave" class="btn btn-ghost">Exit</button>
+            </div>
+          </div>
         </div>
 
         <div id="promo-modal" class="modal hidden">

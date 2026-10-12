@@ -15,6 +15,8 @@ files.
   Share sit below. Rating, sign-in and the leaderboard live under
   **Account**; lessons under **Learn**.
 - **Puzzles** have their own button on Home (see *Puzzles* below).
+- **Back on Home asks first** (an "Exit Oakwood Chess?" popup). Pulling the page
+  down no longer refreshes it, so a stray swipe can't throw you out of a game.
 - **The game page** is built to fit one phone screen with no scrolling. On a
   phone the move strip sits *above* the board and the board is placed so its
   middle is the middle of the screen (it only shrinks if a very short screen
@@ -113,6 +115,9 @@ the host ticks "Let others watch this game live" when creating the room.
 - Spectated games aren't saved to the spectator's history or rating.
 - You can also browse back through a game you're watching (‹ ›) without
   losing your place when new moves arrive.
+- If a spectator can't connect after about 15 seconds, the screen explains the
+  usual reasons (host didn't tick *Let others watch*, game over, networks that
+  can't reach each other) and offers *Try again*.
 - **Analysis board:** tap *Analysis board* to try moves for **both** sides on
   your own copy of the current position. Nothing is sent to the players, and
   the live game carries on underneath (you're told how many moves you've
@@ -126,7 +131,7 @@ the host ticks "Let others watch this game live" when creating the room.
   browser's speech synthesis — book moves ("e4 is a book move"), brilliant /
   great moves, mistakes and blunders, check and checkmate — with the same line
   shown on screen. The 🔊 Voice button turns it off. Commentary uses the
-  built-in engine at a small depth, so treat it as a friendly guide.
+  engine at a small depth, so treat it as a friendly guide.
 - **If the Watch tab always shows nothing**, check the Firestore rules
   below. The `liveGames` rule must be published, or hosts can't list their
   games and the list can't be read. The app now says so: a host whose
@@ -168,6 +173,12 @@ Everything about your identity now lives under the **Account** tab:
   returns to the foreground, the account's saved name/rating replace this
   device's cached copy. A device with an out-of-date cache can no longer rename
   the account when it syncs a rating.
+- **Account ID.** The Account screen shows the last six characters of your
+  account ID. If two devices show different IDs they are *not* the same
+  account (sign out on one and sign in again). Opening the Account screen
+  always re-reads the saved profile. If the `users` rule isn't published yet,
+  sync still works through `players/`, and the Account screen says the rules
+  need updating.
 - **Signing into an existing account from a second device** uses the
   credential from the first attempt (no second popup, which phones tend to
   block), and releases the abandoned guest's username and leaderboard row.
@@ -194,16 +205,38 @@ Walked into Checkmate*. Openings (Italian Game, London System, Dutch Defense,
 Sicilian Defense and about fifty more lines) come from `openings.js`, which
 also accepts UCI or PGN move text.
 
-- **Flip** is a 180° CSS rotation of the board; pieces, badges and coordinates
-  are turned back upright, and it stays put while you step through moves.
 - **Voice** reads each move note aloud with `speechSynthesis` ("e4 is a book
   move", "Blunder!"); the 🔊 button turns it off.
-- **How accurate is it?** Moves are scored by the app's own engine (`bot.js`)
-  in a Web Worker — a few moves deep, not Stockfish. Blunders and missed mates
-  are caught reliably; the finer labels (Excellent vs Good, and especially
-  Brilliant and Great, which need a deep look at why a sacrifice works) are
-  approximate, and accuracy won't match chess.com's numbers. `analysis.js`
-  exposes `setEngine()` so a Stockfish build can be dropped in later.
+- **Evaluation bar** beside the board shows who is ahead (white share grows from
+  the bottom, with the score at the leading end; `#3` means mate in 3). It
+  appears **only in Game Review** — never during a game, while spectating, or in
+  puzzles.
+- **Engine lines**: the engine's top three lines for the position, with scores
+  and numbered moves. **Blue arrow** = the engine's suggestion; **red arrow** =
+  the threat (what the other side would do if it could move; searched on demand
+  and not shown while you're in check); **green arrow** = the better move after
+  a mistake.
+- **Retry**: on any inaccuracy/mistake/miss/blunder, tap *Retry* to play the
+  position from just before it and find a better move yourself (any move about
+  as good as the best is accepted).
+- **Tap a row in the summary table** (e.g. *Blunder*) to jump to those moves one
+  after another. The summary also shows average centipawn loss and accuracy by
+  phase (opening / middlegame / endgame), and the smoothed evaluation graph.
+- **Options** (⚙ in the header): Quick Analysis (off = deeper, slower; applies to
+  the next review), Show Evaluation Bar, Suggestion Arrows, Threat Arrows,
+  Engine Lines, Move Feedback. Saved on the device.
+- **Coach picture**: put a small square image at `icons/coach.png` (128 × 128 px
+  is plenty; it's shown at 62 px) and it replaces the drawn face. If the file
+  isn't there the drawing stays.
+- **Engine.** Moves are scored by **Stockfish 16** (WebAssembly, single-threaded,
+  in a Web Worker — `stockfish.js` drives it over UCI). Copy the folder
+  `vendor/stockfish/` (the `.js` and `.wasm` from the eval-bar demo) into the
+  site. If those files are missing or the browser can't run them, review falls
+  back automatically to the app's own small engine (`bot.js`) — it still works,
+  but with a few moves of lookahead instead of Stockfish's; the summary says
+  which engine did the work. `analysis.js` exposes `setEngine()` to swap engines.
+  Single-threaded on purpose: the multi-threaded builds need
+  cross-origin-isolation headers that GitHub Pages can't send.
 
 ## Puzzles
 
@@ -213,10 +246,22 @@ The **🧩 Puzzles** button on Home opens three puzzle types:
   wins. Play the computer or a friend on the same device.
 - **Knight's Tour** — tap a square to place a knight, then visit every square
   once; visited squares are numbered. Undo and Restart are available.
+- **Daily limit: 5 puzzles a day.** A puzzle uses one slot when you make its
+  first move (looking, leaving, or retrying after a wrong answer is free). The
+  count is per device and per local calendar day; clearing the browser's site
+  data resets it.
 - **Checkmate Puzzles** — filter by *Mate in 1* or *Mate in 2*. The 65 puzzles
   in `puzzle-data.js` were found in bot-vs-bot games and proven by brute-force
   search; for mate in 2 any move that really forces mate is accepted, not just
   the stored one.
+
+## Moving pieces
+
+Tap a piece, then a square — or **drag** like chess.com: an enlarged piece
+follows your finger (held above it so it isn't hidden), a grey halo marks the
+square you're over, and the legal-move dots show. Dropping on a square does what
+tapping it would, so every rule check is the same. Works on the game board, the
+spectator analysis board, Retry and the puzzles.
 
 ## Look & feel
 
@@ -458,7 +503,9 @@ style.css         Visual design
 main.js           Screens, board rendering, move handling, game state
 multiplayer.js    Thin wrapper around PeerJS for the online room
 clock.js          Per-player countdown clock
-bot.js            Offline computer opponent (minimax + alpha-beta); also scores every move for review
+bot.js            Offline computer opponent (minimax + alpha-beta); also the fallback review engine
+stockfish.js      Stockfish (WebAssembly) driven over UCI, with MultiPV and live evaluation
+vendor/stockfish/ stockfish-nnue-16-single.js + .wasm (not in this repo's code — copy from the demo)
 analysis.js       Game Review engine: move labels, accuracy, kid-friendly reasons, coach text
 analysis-worker.js  Runs the analysis off the main thread
 openings.js       Opening names and "still in book" check (SAN / UCI / PGN)
@@ -510,5 +557,5 @@ all the sizes for you directly.
   corporate/school network can sometimes block WebRTC.
 - If your friend closes the tab, the game ends — there's no reconnect or
   saved-game state (by design, to keep this a small, serverless project).
-- Game Review and spectator commentary use the built-in engine, not Stockfish
-  (see *Game Review* above for what that means for accuracy).
+- Game Review and spectator commentary use Stockfish when its files are in
+  `vendor/stockfish/`, otherwise the built-in engine (see *Game Review*).

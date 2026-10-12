@@ -8,7 +8,8 @@
 // what to draw (see renderBoard in main.js).
 
 import { Chess } from "./vendor/chess.js";
-import { analyzeGame, CLASS_INFO, CLASS_ORDER, stopAnalysis } from "./analysis.js";
+import { analyzeGame, analyzeThreat, winPercent, CLASS_INFO, CLASS_ORDER, stopAnalysis } from "./analysis.js";
+import { getAnalysisSettings, saveAnalysisSettings } from "./storage.js";
 import { MATE_THRESHOLD } from "./bot.js";
 import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported } from "./voice.js";
 
@@ -26,44 +27,68 @@ export function createReview({ rerender, onClose }) {
   let board = new Chess();
   let active = false;
   let wired = false;
+  let settings = getAnalysisSettings();
+  const threats = new Map(); // fen -> {from,to} | null, filled in lazily
+  let retry = null; // { game, selected, targets, ply, solved } while the player retries a move
+  const jumpCursor = {}; // per move-quality: which one the summary row jumped to last
 
   const fenAt = (i) => (i === 0 ? data.plies[0].fenBefore : data.plies[i - 1].fenAfter);
   const cur = () => (data && index > 0 ? data.plies[index - 1] : null);
 
-  // The arrow is drawn for a move that was NOT best (what to play instead);
-  // the Best button draws it for any move.
-  function arrow() {
+  // Arrows on the board, in drawing order:
+  //   green  — the better move, shown after a mistake (the move feedback)
+  //   blue   — the engine's suggestion for the side to move (if enabled)
+  //   red    — the threat: what the other side would do if it could move (if enabled)
+  function arrows() {
     const p = cur();
-    if (!p || phase !== "steps") return null;
-    if (!(ERRORS.has(p.cls) || showBest)) return null;
-    if (p.bestFrom === p.from && p.bestTo === p.to) return null;
-    return { from: p.bestFrom, to: p.bestTo };
+    if (phase !== "steps" || !data || retry) return [];
+    const out = [];
+    if (p && settings.moveFeedback && (ERRORS.has(p.cls) || showBest) && !(p.bestFrom === p.from && p.bestTo === p.to)) {
+      out.push({ from: p.bestFrom, to: p.bestTo, color: "rgba(129,182,76,0.85)" });
+    }
+    const pos = data.positions[index];
+    if (settings.suggestionArrows && pos && pos.best && !(out[0] && out[0].from === pos.best.from && out[0].to === pos.best.to)) {
+      out.push({ from: pos.best.from, to: pos.best.to, color: "rgba(72,140,210,0.85)" });
+    }
+    const t = pos ? threats.get(pos.fen) : null;
+    if (settings.threatArrows && t) out.push({ from: t.from, to: t.to, color: "rgba(205,70,60,0.85)" });
+    return out;
   }
 
   const hook = {
     get game() {
-      return board;
+      return retry ? retry.game : board;
     },
     get cssFlip() {
       return cssFlip;
     },
     classes(square) {
+      if (retry) {
+        const out = [];
+        if (retry.selected === square) out.push("selected");
+        const t = retry.targets.find((m) => m.to === square);
+        if (t) out.push("legal", ...(t.captured ? ["capture"] : []));
+        return out;
+      }
       const p = cur();
       return p && (square === p.from || square === p.to) ? ["last-move"] : [];
     },
     badge(square) {
       const p = cur();
-      if (!p || square !== p.to || phase !== "steps") return null;
+      if (retry || !p || square !== p.to || phase !== "steps" || !settings.moveFeedback) return null;
       const info = CLASS_INFO[p.cls];
       return { mark: info.mark, color: info.color, label: info.label };
     },
-    arrow,
+    arrows,
+    get onSquare() {
+      return retry && !retry.solved ? retrySquare : undefined;
+    },
   };
 
-  function evalLabel(cp) {
-    if (Math.abs(cp) >= MATE_THRESHOLD) return cp > 0 ? "+M" : "-M";
+  function evalLabel(cp, digits = 2) {
+    if (Math.abs(cp) >= MATE_THRESHOLD) return `${cp > 0 ? "" : "-"}#${100000 - Math.abs(cp)}`;
     const v = cp / 100;
-    return (v >= 0 ? "+" : "") + v.toFixed(2);
+    return (v >= 0 ? "+" : "") + v.toFixed(digits);
   }
 
   function setPhase(p) {
@@ -105,7 +130,42 @@ export function createReview({ rerender, onClose }) {
       dot.textContent = info.mark;
       cb.textContent = data.counts.b[key];
       cb.style.color = info.color;
+      // Tap a row to jump to those moves one after another ("learn from your mistakes").
+      const hits = data.plies.filter((p) => p.cls === key);
+      if (hits.length) {
+        row.classList.add("clickable");
+        row.title = `Go to ${info.label.toLowerCase()} moves`;
+        row.onclick = () => {
+          jumpCursor[key] = ((jumpCursor[key] ?? -1) + 1) % hits.length;
+          startSteps(hits[jumpCursor[key]].ply);
+        };
+      } else row.classList.add("zero");
       rows.appendChild(row);
+    }
+    renderExtra();
+    $("review-engine-note").textContent = `Analysed with ${data.engine}${data.depth && data.depth < 99 ? ` (depth ${data.depth}+)` : ""}.`;
+  }
+
+  // Average centipawn loss and accuracy by phase of the game.
+  function renderExtra() {
+    const box = $("review-extra");
+    box.innerHTML = "";
+    const row = (label, w, b, sub) => {
+      const r = document.createElement("div");
+      r.className = "rv-grid";
+      r.innerHTML = '<span class="rv-label"></span><div class="rv-num"></div><span></span><div class="rv-num"></div>';
+      r.children[0].textContent = label;
+      if (sub) r.children[0].className = "rv-label rv-sub";
+      r.children[1].textContent = w == null ? "–" : w;
+      r.children[3].textContent = b == null ? "–" : b;
+      box.appendChild(r);
+    };
+    row("Avg. centipawn loss", data.acpl.w, data.acpl.b);
+    const names = { opening: "Opening", middlegame: "Middlegame", endgame: "Endgame" };
+    for (const k of ["opening", "middlegame", "endgame"]) {
+      const ph = data.phases[k];
+      if (ph.w == null && ph.b == null) continue;
+      row(`${names[k]} accuracy`, ph.w == null ? null : ph.w.toFixed(1), ph.b == null ? null : ph.b.toFixed(1), true);
     }
   }
 
@@ -126,14 +186,37 @@ export function createReview({ rerender, onClose }) {
 
     ctx.fillStyle = "#4b4847";
     ctx.fillRect(0, 0, W, H);
-    // White's share: filled from the bottom up to the curve.
+    // A smooth curve through the evaluation after every move (Catmull-Rom
+    // turned into Bezier segments; the control points are kept inside the
+    // graph so the curve never overshoots the top or bottom).
+    const pts = data.winSeries.map((w, i) => [xAt(i), yAt(w)]);
+    const clampY = (y) => Math.max(0, Math.min(H, y));
+    const curve = () => {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i - 1)];
+        const p1 = pts[i];
+        const p2 = pts[i + 1];
+        const p3 = pts[Math.min(pts.length - 1, i + 2)];
+        ctx.bezierCurveTo(
+          p1[0] + (p2[0] - p0[0]) / 6,
+          clampY(p1[1] + (p2[1] - p0[1]) / 6),
+          p2[0] - (p3[0] - p1[0]) / 6,
+          clampY(p2[1] - (p3[1] - p1[1]) / 6),
+          p2[0],
+          p2[1]
+        );
+      }
+    };
     ctx.beginPath();
     ctx.moveTo(0, H);
-    data.winSeries.forEach((w, i) => ctx.lineTo(xAt(i), yAt(w)));
+    ctx.lineTo(pts[0][0], pts[0][1]);
+    curve();
     ctx.lineTo(xAt(n), H);
     ctx.closePath();
     ctx.fillStyle = "#f1f1ee";
     ctx.fill();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.strokeStyle = "rgba(120,120,115,0.9)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -224,20 +307,103 @@ export function createReview({ rerender, onClose }) {
       return;
     }
     const info = CLASS_INFO[p.cls];
+    $("coach-eval").textContent = evalLabel(p.evalWhite);
+    if (!settings.moveFeedback) {
+      // Feedback off: just say which move this is, no verdict.
+      badge.style.display = "none";
+      $("coach-title").textContent = `${Math.ceil(p.ply / 2)}${p.color === "w" ? "." : "..."} ${p.san}`;
+      $("coach-detail").textContent = "Move feedback is turned off in the analysis options.";
+      return;
+    }
     badge.style.display = "";
     badge.style.background = info.color;
     badge.textContent = info.mark;
     $("coach-title").textContent = p.title;
-    $("coach-eval").textContent = evalLabel(p.evalWhite);
     $("coach-detail").textContent = p.detail;
+  }
+
+  // The evaluation bar beside the board — Game Review only.
+  function updateEvalBar() {
+    const bar = $("eval-bar");
+    const show = active && phase === "steps" && !!data && settings.evalBar;
+    bar.classList.toggle("hidden", !show);
+    const root = document.documentElement.style;
+    if (!show) {
+      root.removeProperty("--evalbar-w");
+      return;
+    }
+    root.setProperty("--evalbar-w", "24px"); // bar + gap: the board gives up this much width
+    const cp = data.positions[index].evalWhite;
+    const white = winPercent(cp);
+    bar.classList.toggle("flipped", cssFlip); // black at the bottom -> white's share grows from the top
+    $("eval-bar-fill").style.height = `${white}%`;
+    const label = $("eval-bar-score");
+    label.textContent = evalLabel(Math.abs(cp), 1).replace("+", "");
+    // The number sits at the end of the side that is ahead.
+    const whiteAhead = cp >= 0;
+    const atBottom = whiteAhead !== cssFlip;
+    label.className = "eval-bar-score " + (atBottom ? "at-bottom" : "at-top");
+    if (whiteAhead !== atBottom) label.style.color = "";
+    label.style.color = whiteAhead ? "#262522" : "#f1f1ee";
+  }
+
+  // The engine's top lines for the position on the board (lichess-style).
+  function renderLines() {
+    const box = $("review-lines");
+    const pos = data && data.positions[index];
+    const show = settings.engineLines && phase === "steps" && pos && pos.lines.length > 0;
+    box.classList.toggle("hidden", !show);
+    if (!show) return;
+    box.innerHTML = "";
+    const parts = pos.fen.split(" ");
+    let number = Number(parts[5]) || 1;
+    for (const line of pos.lines) {
+      const row = document.createElement("div");
+      row.className = "eng-line";
+      const sc = document.createElement("span");
+      sc.className = "eng-score " + (line.score >= 0 ? "w" : "b");
+      sc.textContent = evalLabel(line.score, 2);
+      const mv = document.createElement("span");
+      mv.className = "eng-moves";
+      let n = number;
+      let whiteToMove = parts[1] === "w";
+      mv.textContent = line.san
+        .map((san, i) => {
+          const out = whiteToMove ? `${n}. ${san}` : i === 0 ? `${n}... ${san}` : san;
+          if (!whiteToMove) n++;
+          whiteToMove = !whiteToMove;
+          return out;
+        })
+        .join(" ");
+      row.append(sc, mv);
+      box.appendChild(row);
+    }
+  }
+
+  // Red "threat" arrow: searched on demand for the position being viewed.
+  function requestThreat() {
+    if (!settings.threatArrows || phase !== "steps" || !data) return;
+    const fen = data.positions[index].fen;
+    if (threats.has(fen)) return;
+    threats.set(fen, null);
+    analyzeThreat(fen).then((t) => {
+      if (!t) return;
+      threats.set(fen, t);
+      if (active && data && data.positions[index].fen === fen) rerender();
+    });
   }
 
   function refresh({ say = false } = {}) {
     if (!data) return;
     board = new Chess(fenAt(index));
     if (phase === "steps") {
+      if (retry) exitRetry(false);
       renderCoach();
       renderStrip();
+      renderLines();
+      requestThreat();
+      const cp = cur();
+      $("btn-review-retry").disabled = !(cp && ERRORS.has(cp.cls));
       $("btn-review-prev").disabled = index <= 0;
       $("btn-review-next").disabled = index >= data.plies.length;
       $("btn-mv-rprev").disabled = index <= 0;
@@ -245,8 +411,77 @@ export function createReview({ rerender, onClose }) {
       $("btn-review-best").classList.toggle("on", showBest);
     }
     drawGraph();
+    updateEvalBar();
     rerender();
     if (say && index > 0) speak(data.plies[index - 1].speech);
+  }
+
+  // ----- Retry: try to find the better move yourself -----
+  function retrySquare(square) {
+    if (!retry || retry.solved) return;
+    const g = retry.game;
+    if (retry.selected) {
+      const mv = retry.targets.find((m) => m.to === square);
+      if (mv) {
+        const made = g.move({ from: retry.selected, to: square, promotion: mv.promotion ? "q" : undefined });
+        retry.selected = null;
+        retry.targets = [];
+        const p = data.plies[retry.ply - 1];
+        const ok = p.acceptable.some((a) => a.from === made.from && a.to === made.to);
+        if (ok) {
+          retry.solved = true;
+          setRetryMessage("That's it!", `${made.san} is ${made.san === p.bestSan ? "the best move" : "one of the best moves"} here.`, "#81b64c", "✓");
+        } else {
+          setRetryMessage("Not quite", `${made.san} isn't the move. Try again.`, "#e58f2a", "?");
+          const undoMe = retry;
+          setTimeout(() => {
+            if (retry === undoMe && !undoMe.solved) {
+              undoMe.game.undo();
+              rerender();
+              setRetryMessage("Find a better move", "Play your move on the board.", "#7d9b6a", "↻");
+            }
+          }, 900);
+        }
+        rerender();
+        return;
+      }
+    }
+    const piece = g.get(square);
+    if (piece && piece.color === g.turn()) {
+      retry.selected = square;
+      retry.targets = g.moves({ square, verbose: true });
+    } else {
+      retry.selected = null;
+      retry.targets = [];
+    }
+    rerender();
+  }
+
+  function setRetryMessage(title, detail, color, mark) {
+    const badge = $("coach-badge");
+    badge.style.display = "";
+    badge.style.background = color;
+    badge.textContent = mark;
+    $("coach-title").textContent = title;
+    $("coach-detail").textContent = detail;
+  }
+
+  function startRetry() {
+    const p = cur();
+    if (!p || !ERRORS.has(p.cls)) return;
+    retry = { game: new Chess(p.fenBefore), selected: null, targets: [], ply: p.ply, solved: false };
+    $("btn-review-retry").classList.add("on");
+    setRetryMessage("Find a better move", "Play your move on the board.", "#7d9b6a", "↻");
+    rerender();
+  }
+
+  function exitRetry(redraw = true) {
+    retry = null;
+    $("btn-review-retry").classList.remove("on");
+    if (redraw) {
+      renderCoach();
+      rerender();
+    }
   }
 
   function goTo(i, opts) {
@@ -277,6 +512,8 @@ export function createReview({ rerender, onClose }) {
       stopSpeaking();
       setPhase("summary");
       index = 0;
+      if (retry) exitRetry(false);
+      updateEvalBar();
       requestAnimationFrame(() => {
         board = new Chess(fenAt(0));
         drawGraph();
@@ -293,6 +530,63 @@ export function createReview({ rerender, onClose }) {
     else if (e.key === "ArrowRight") goTo(index + 1, { say: true });
   }
 
+  // ----- the options sheet (the gear) -----
+  const OPTIONS = [
+    ["quick", "Quick Analysis", "Faster review. Turn off for a deeper, slower one (applies to the next review)."],
+    ["evalBar", "Show Evaluation Bar", "Who is ahead, beside the board."],
+    ["suggestionArrows", "Show Suggestion Arrows", "A blue arrow for the engine's best move."],
+    ["threatArrows", "Show Threat Arrows", "A red arrow for what the other side threatens."],
+    ["engineLines", "Show Engine Lines", "The engine's top three lines."],
+    ["moveFeedback", "Show Move Feedback", "The coach's comments and the badge on each move."],
+  ];
+
+  function renderSettings() {
+    const list = $("rv-settings-list");
+    list.innerHTML = "";
+    for (const [key, title, hint] of OPTIONS) {
+      const row = document.createElement("div");
+      row.className = "rv-set-row";
+      row.innerHTML = '<div class="rv-set-text"><b></b><small></small></div><button type="button" class="rv-switch" role="switch"></button>';
+      row.querySelector("b").textContent = title;
+      row.querySelector("small").textContent = hint;
+      const sw = row.querySelector("button");
+      sw.setAttribute("aria-checked", String(!!settings[key]));
+      sw.setAttribute("aria-label", title);
+      sw.dataset.option = key;
+      sw.onclick = () => {
+        settings = { ...settings, [key]: !settings[key] };
+        saveAnalysisSettings(settings);
+        sw.setAttribute("aria-checked", String(!!settings[key]));
+        if (data) refresh();
+      };
+      list.appendChild(row);
+    }
+  }
+
+  function openSettings() {
+    renderSettings();
+    $("review-settings").classList.remove("hidden");
+  }
+  function closeSettings() {
+    $("review-settings").classList.add("hidden");
+    if (data) refresh();
+  }
+
+  // A picture for the coach: put a small square image at icons/coach.png and
+  // it replaces the drawn face; if the file isn't there the drawing stays.
+  function loadCoachImage() {
+    const img = new Image();
+    img.onload = () => {
+      document.querySelectorAll(".coach-avatar").forEach((box) => {
+        box.innerHTML = "";
+        const c = img.cloneNode();
+        c.alt = "";
+        box.appendChild(c);
+      });
+    };
+    img.src = "icons/coach.png";
+  }
+
   function wire() {
     wired = true;
     $("btn-review-start").onclick = () => startSteps(1);
@@ -300,13 +594,12 @@ export function createReview({ rerender, onClose }) {
     $("btn-review-next").onclick = () => goTo(index + 1, { say: true });
     $("btn-mv-rprev").onclick = () => goTo(index - 1, { say: true });
     $("btn-mv-rnext").onclick = () => goTo(index + 1, { say: true });
+    $("btn-review-retry").onclick = () => (retry ? exitRetry() : startRetry());
+    $("btn-review-settings").onclick = openSettings;
+    $("btn-settings-back").onclick = closeSettings;
     $("btn-review-best").onclick = () => {
       showBest = !showBest;
       refresh();
-    };
-    $("btn-review-flip").onclick = () => {
-      cssFlip = !cssFlip;
-      rerender(); // re-render only: step position is untouched
     };
     $("btn-review-voice").onclick = () => {
       setVoiceEnabled(!isVoiceEnabled());
@@ -327,7 +620,13 @@ export function createReview({ rerender, onClose }) {
   // moves: chess.js verbose history. orientation: whose side is at the bottom
   // ("w" or "b").
   async function open({ moves, startFen = null, whiteName = "White", blackName = "Black", orientation = "w" }) {
-    if (!wired) wire();
+    if (!wired) {
+      wire();
+      loadCoachImage();
+    }
+    settings = getAnalysisSettings();
+    retry = null;
+    threats.clear();
     active = true;
     data = null;
     index = 0;
@@ -356,6 +655,7 @@ export function createReview({ rerender, onClose }) {
       data = await analyzeGame({
         moves,
         startFen,
+        preset: settings.quick ? "quick" : "deep",
         cancel: mine,
         onProgress: (done, total) => {
           $("review-progress-bar").style.width = `${Math.round((done / total) * 100)}%`;
@@ -388,6 +688,8 @@ export function createReview({ rerender, onClose }) {
     stopAnalysis();
     stopSpeaking();
     delete document.body.dataset.reviewPhase;
+    document.documentElement.style.removeProperty("--evalbar-w");
+    $("eval-bar").classList.add("hidden");
     onClose();
   }
 
@@ -397,6 +699,8 @@ export function createReview({ rerender, onClose }) {
     if (cancel) cancel.cancelled = true;
     stopSpeaking();
     delete document.body.dataset.reviewPhase;
+    document.documentElement.style.removeProperty("--evalbar-w");
+    $("eval-bar").classList.add("hidden");
   }
 
   return {

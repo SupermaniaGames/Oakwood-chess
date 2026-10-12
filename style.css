@@ -18,9 +18,9 @@
 /* One number drives the board and everything sized to it. On a phone it's
    the narrower of "full width" and "what's left after the header, player
    bars, move strip and toolbar", so the whole game fits without scrolling. */
-:root { --board-size: min(calc(100vw - 16px), calc(100vh - 300px), 640px); }
+:root { --board-size: min(calc(100vw - 16px - var(--evalbar-w, 0px)), calc(100vh - 300px), 640px); }
 @supports (height: 100dvh) {
-  :root { --board-size: min(calc(100vw - 16px), calc(100dvh - 300px), 640px); }
+  :root { --board-size: min(calc(100vw - 16px - var(--evalbar-w, 0px)), calc(100dvh - 300px), 640px); }
 }
 
 * { box-sizing: border-box; }
@@ -937,3 +937,68 @@ body[data-screen="review"] #status { display: none; }
 
 .spectator-banner .controls { flex-wrap: wrap; gap: 6px; }
 .spectator-banner .emoji-bar button { font-size: 1.25rem; }
+
+/* A pull-down must never refresh the page (it threw people back to Home
+   mid-game), and the board must not scroll the page while a piece is dragged. */
+html, body { overscroll-behavior: none; }
+.board { touch-action: none; }
+
+/* Dragging a piece */
+.sq.drag-origin .piece-svg { opacity: 0.3; }
+.drag-halo {
+  position: fixed; z-index: 40; pointer-events: none; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.17); transform: translate(-50%, -50%);
+}
+.drag-piece {
+  position: fixed; z-index: 41; pointer-events: none; transform: translate(-50%, -50%);
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.45));
+}
+
+/* --- Evaluation bar: Game Review only --- */
+.board-stage { position: relative; display: flex; align-items: stretch; justify-content: center; gap: 4px; }
+.board-stage .emoji-layer { left: auto; right: 0; transform: none; }
+.eval-bar {
+  position: relative; flex: 0 0 20px; width: 20px; height: var(--board-size);
+  background: #403d39; border-radius: 4px; overflow: hidden;
+}
+.eval-bar-fill {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 50%; background: #f1f1ee;
+  transition: height 0.4s ease;
+}
+.eval-bar.flipped .eval-bar-fill { bottom: auto; top: 0; }
+.eval-bar-score {
+  position: absolute; left: 0; right: 0; text-align: center; font-size: 9px; font-weight: 800; line-height: 1;
+  white-space: nowrap; overflow: hidden;
+}
+.eval-bar-score.at-bottom { bottom: 3px; color: #262522; }
+.eval-bar-score.at-top { top: 3px; color: #f1f1ee; }
+
+/* --- Engine lines, Retry, options sheet, extra summary stats --- */
+.review-lines { display: flex; flex-direction: column; gap: 4px; }
+.eng-line {
+  display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--panel-line);
+  border-radius: 8px; padding: 6px 8px; font-size: 0.85rem; min-width: 0;
+}
+.eng-score { flex: 0 0 auto; min-width: 46px; text-align: center; border-radius: 5px; padding: 2px 4px; font-weight: 800; font-size: 0.8rem; }
+.eng-score.w { background: #f1f1ee; color: #262522; }
+.eng-score.b { background: #403d39; color: #f1f1ee; }
+.eng-moves { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--parchment-dim); }
+.rv-extra { display: flex; flex-direction: column; gap: 4px; }
+.rv-extra .rv-grid { padding: 3px 0; }
+.rv-extra .rv-num { text-align: center; font-weight: 700; }
+.rv-extra .rv-sub { color: var(--parchment-dim); font-size: 0.85rem; }
+.rv-row.clickable { cursor: pointer; }
+.rv-row.zero { opacity: 0.45; }
+.rv-settings { position: fixed; inset: 0; z-index: 60; background: #2b2a27; overflow-y: auto; padding: 8px 14px 24px; }
+.rv-settings-list { max-width: 520px; margin: 0 auto; }
+.rv-set-row { display: flex; align-items: center; gap: 12px; padding: 16px 4px; }
+.rv-set-text { flex: 1; min-width: 0; }
+.rv-set-text b { display: block; font-size: 1.05rem; }
+.rv-set-text small { color: var(--parchment-dim); }
+.rv-switch { position: relative; flex: 0 0 auto; width: 52px; height: 30px; border: none; border-radius: 15px; background: #555; cursor: pointer; transition: background 0.2s; }
+.rv-switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 50%; background: #ddd; transition: transform 0.2s; }
+.rv-switch[aria-checked="true"] { background: #5a7a3a; }
+.rv-switch[aria-checked="true"]::after { background: #81b64c; transform: translateX(22px); }
+.coach-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+body[data-screen="review"][data-review-phase="steps"] .review-lines { order: 2; width: var(--board-size); }
+@media (min-width: 900px) { body[data-screen="review"] .review-lines { width: auto; } }

@@ -13,10 +13,20 @@
 
 import { Chess } from "./vendor/chess.js";
 import { scoreAllMoves, MATE_THRESHOLD } from "./bot.js";
+import { createStockfish } from "./stockfish.js";
 import { isBookPly, openingAt } from "./openings.js";
 
+// Built-in engine budgets (used when Stockfish isn't available).
 export const ANALYSIS_PARAMS = { depth: 3, nodes: 15000, q: 1 };
 export const LIVE_PARAMS = { depth: 3, nodes: 8000, q: 1 };
+const BOT_PRESETS = { quick: ANALYSIS_PARAMS, deep: { depth: 4, nodes: 40000, q: 2 }, live: LIVE_PARAMS };
+// Stockfish budgets: stop at this depth or this many milliseconds, whichever first.
+export const ENGINE_PRESETS = {
+  quick: { depth: 10, movetime: 700 },
+  deep: { depth: 14, movetime: 2500 },
+  live: { depth: 10, movetime: 500 },
+};
+const MATE = 100000;
 
 // ---------- The ten move classes ----------
 
@@ -105,6 +115,9 @@ export function analyzeFenSync(fen, params = ANALYSIS_PARAMS) {
     moves: res.moves, // sorted best-first, scores from the side-to-move's view
     depth: res.depth,
     inCheck: g.isCheck(),
+    legalCount: res.moves.length,
+    lines: res.moves.slice(0, 1).map((m) => ({ score: m.score, pv: [m.from + m.to + (m.promotion || "")] })),
+    engine: "builtin",
   };
 }
 
@@ -169,13 +182,123 @@ function makeDefaultEngine() {
   };
 }
 
-let engine = makeDefaultEngine();
+const botEngine = makeDefaultEngine();
 
-// Swap in a different engine: an object with analyze(fen, params) returning a
-// Promise of { moves: [{from,to,promotion,score}], depth } (scores in
-// centipawns from the side-to-move's view, best first).
+// Stockfish is the preferred engine. It starts on first use; if its files
+// are missing or it can't start (old browser, blocked worker) everything
+// quietly falls back to the built-in engine above.
+let sf = null;
+let sfStatus = "idle"; // idle | ready | failed
+function getStockfish() {
+  if (sfStatus === "failed") return null;
+  if (!sf) {
+    sf = createStockfish();
+    sf.ready.then(
+      () => (sfStatus = "ready"),
+      () => (sfStatus = "failed")
+    );
+  }
+  return sf;
+}
+
+// UCI "mate N" -> a huge centipawn-style number so one scale covers both.
+function uciScore(sc) {
+  if (sc.type === "mate") return sc.value > 0 ? MATE - sc.value : -(MATE + sc.value);
+  return sc.value;
+}
+
+async function stockfishAnalyze(fen, preset) {
+  const g = new Chess(fen);
+  const legalCount = g.moves().length;
+  const base = { fen, turn: g.turn(), inCheck: g.isCheck(), legalCount, engine: "stockfish" };
+  if (legalCount === 0) return { ...base, moves: [], lines: [], depth: 0 }; // mate / stalemate
+  const res = await getStockfish().analyze(fen, { ...ENGINE_PRESETS[preset || "quick"], multipv: 3 });
+  if (!res || res.lines.length === 0) throw new Error("no result");
+  const lines = res.lines.map((l) => ({ score: uciScore(l.score), pv: l.pv, depth: l.depth }));
+  const moves = lines.map((l) => ({
+    from: l.pv[0].slice(0, 2),
+    to: l.pv[0].slice(2, 4),
+    promotion: l.pv[0][4],
+    score: l.score,
+  }));
+  return { ...base, moves, lines, depth: Math.max(...lines.map((l) => l.depth)) };
+}
+
+// The engine Game Review uses: Stockfish when available, else the built-in one.
+const autoEngine = {
+  async analyze(fen, preset = "quick") {
+    if (sfStatus !== "failed") {
+      try {
+        return await stockfishAnalyze(fen, preset);
+      } catch {
+        if (sfStatus === "idle") sfStatus = "failed";
+        else if (sf && sf.failed) sfStatus = "failed";
+      }
+    }
+    return botEngine.analyze(fen, BOT_PRESETS[preset] || BOT_PRESETS.quick);
+  },
+  stop() {
+    botEngine.stop();
+  },
+};
+
+let engine = autoEngine;
+
+// Swap in a different engine: an object with analyze(fen, preset) returning a
+// Promise of { moves: [{from,to,promotion,score}], depth, legalCount } (scores
+// in centipawns from the side-to-move's view, best first).
 export function setEngine(e) {
   engine = e;
+}
+
+// Which engine actually did the work ("Stockfish 16" or "Built-in engine").
+export function engineName() {
+  return sfStatus === "ready" ? "Stockfish 16" : "Built-in engine";
+}
+
+// Live score for the evaluation bar. onUpdate({cp, depth, best}) is called as
+// the search deepens (cp is from White's point of view). A newer call cancels
+// the older one. Falls back to a one-shot built-in evaluation.
+export function liveEvaluate(fen, onUpdate) {
+  const g = new Chess(fen);
+  const sign = g.turn() === "b" ? -1 : 1;
+  if (g.moves().length === 0) {
+    const cp = g.isCheckmate() ? (g.turn() === "w" ? -(MATE - 1) : MATE - 1) : 0;
+    onUpdate({ cp, depth: 0, best: null, final: true });
+    return Promise.resolve();
+  }
+  const fallback = async () => {
+    const a = await botEngine.analyze(fen, LIVE_PARAMS);
+    if (a.moves.length) onUpdate({ cp: sign * a.moves[0].score, depth: a.depth, best: a.moves[0].from + a.moves[0].to, final: true });
+  };
+  const s = getStockfish();
+  if (!s || sfStatus === "failed") return fallback();
+  return s
+    .evaluate(fen, {
+      ...ENGINE_PRESETS.deep,
+      onProgress: (info) => onUpdate({ cp: sign * uciScore(info.score), depth: info.depth, best: info.pv[0], final: false }),
+    })
+    .then((res) => {
+      if (res && res.lines[0]) onUpdate({ cp: sign * uciScore(res.lines[0].score), depth: res.lines[0].depth, best: res.best, final: true });
+    })
+    .catch(fallback);
+}
+
+// What the side that just moved would do if it could move again — the
+// "threat". Not available while the side to move is in check.
+export async function analyzeThreat(fen) {
+  const g = new Chess(fen);
+  if (g.isCheck()) return null;
+  const parts = fen.split(" ");
+  parts[1] = parts[1] === "w" ? "b" : "w";
+  parts[3] = "-"; // en passant no longer applies
+  const flipped = parts.join(" ");
+  try {
+    const a = await autoEngine.analyze(flipped, "live");
+    return a.moves.length ? { from: a.moves[0].from, to: a.moves[0].to, score: a.moves[0].score } : null;
+  } catch {
+    return null;
+  }
 }
 
 // ---------- Judging one move ----------
@@ -220,7 +343,8 @@ export function judgeMove({ a, played, fenBefore, san, book, prevOppDrop = 0, pr
   const isBest = sameMove(entry, best) || drop <= 0.3;
 
   let cls;
-  if (a.moves.length === 1) {
+  const legal = a.legalCount != null ? a.legalCount : a.moves.length;
+  if (legal === 1) {
     cls = book ? "book" : "best"; // forced: nothing to judge
   } else if (drop >= 20) {
     cls = "blunder";
@@ -233,11 +357,12 @@ export function judgeMove({ a, played, fenBefore, san, book, prevOppDrop = 0, pr
     // A forced recapture isn't "great" — taking back the piece that just took
     // is what anyone would do — so only non-recaptures can earn it.
     const isRecapture = prevTo && played.to === prevTo;
-    if (a.moves.length >= 4 && second && isBest && !isRecapture) {
+    if (legal >= 4 && second && isBest && !isRecapture) {
       const onlyMove = winBest - winPercent(second.score) >= 15;
       if (onlyMove) cls = "great";
     }
     if (drop <= 2 && winPlayed >= 40 && winBest < 92 && isSacrifice(fenBefore, played)) cls = "brilliant";
+    if (cls === "great" && san.endsWith("#")) cls = "best"; // delivering mate isn't a "great" find
   }
   if (book && drop < 10) cls = "book";
 
@@ -423,33 +548,59 @@ function whiteView(score, turn) {
   return turn === "w" ? score : -score;
 }
 
+// Score of the position AFTER a move, from the mover's point of view, when the
+// engine didn't score that exact move itself (Stockfish only returns its top
+// lines): it's the opposing side's best score, negated. A finished game has no
+// moves to search, so checkmate counts as a win for the mover.
+function afterMoveScore(next, fenAfter) {
+  if (next && next.moves.length) return -next.moves[0].score;
+  const g = new Chess(fenAfter);
+  return g.isCheckmate() ? MATE - 1 : 0;
+}
+
+const PHASE_VALUE = { n: 3, b: 3, r: 5, q: 9 };
+function nonPawnMaterial(fen) {
+  const g = new Chess(fen);
+  const m = { w: 0, b: 0 };
+  for (const row of g.board()) for (const c of row) if (c && PHASE_VALUE[c.type]) m[c.color] += PHASE_VALUE[c.type];
+  return m;
+}
+
 // moves: chess.js verbose history. Returns
-// { plies, startWin, accuracy:{w,b}, opening, depth }.
+// { plies, positions, counts, acpl, phases, accuracy:{w,b}, opening, depth, engine }.
 // onProgress(done, total); cancel is { cancelled: boolean }.
-export async function analyzeGame({ moves, startFen, params = ANALYSIS_PARAMS, onProgress, cancel }) {
+export async function analyzeGame({ moves, startFen, preset = "quick", onProgress, cancel }) {
   const g = startFen ? new Chess(startFen) : new Chess();
   const sans = moves.map((m) => m.san);
   const analyses = [];
   const fens = [g.fen()];
-  const total = moves.length;
+  const total = moves.length + 1; // every position, including the final one
 
-  for (let i = 0; i < total; i++) {
-    if (cancel && cancel.cancelled) throw new Error("cancelled");
-    const fen = g.fen();
-    const a = await engine.analyze(fen, params);
-    analyses.push(a);
+  for (let i = 0; i < moves.length; i++) {
     g.move({ from: moves[i].from, to: moves[i].to, promotion: moves[i].promotion });
     fens.push(g.fen());
+  }
+  for (let i = 0; i < total; i++) {
+    if (cancel && cancel.cancelled) throw new Error("cancelled");
+    analyses.push(await engine.analyze(fens[i], preset));
     if (onProgress) onProgress(i + 1, total);
   }
 
+  // The engine may not have scored the move that was actually played (Stockfish
+  // returns only its best few); derive that score from the following position.
+  moves.forEach((m, i) => {
+    const a = analyses[i];
+    const played = { from: m.from, to: m.to, promotion: m.promotion };
+    if (!a.moves.some((x) => sameMove(x, played))) {
+      a.moves = [...a.moves, { ...played, score: afterMoveScore(analyses[i + 1], fens[i + 1]) }];
+    }
+  });
+
   const plies = [];
   let prevDrop = 0;
-  const winSeries = [];
-  const startAnalysis = analyses[0];
-  winSeries.push(startAnalysis ? winPercent(whiteView(startAnalysis.moves[0].score, startAnalysis.turn)) : 50);
+  const winSeries = [winPercent(analyses[0].moves.length ? whiteView(analyses[0].moves[0].score, analyses[0].turn) : 0)];
 
-  for (let i = 0; i < total; i++) {
+  for (let i = 0; i < moves.length; i++) {
     const a = analyses[i];
     const m = moves[i];
     const played = { from: m.from, to: m.to, promotion: m.promotion };
@@ -484,6 +635,10 @@ export async function analyzeGame({ moves, startFen, params = ANALYSIS_PARAMS, o
       /* best move couldn't be rendered; the text just omits it */
     }
     const op = !startFen ? openingAt(sans, i + 1) : null;
+    // Moves about as good as the best one: "Retry" accepts any of them.
+    const acceptable = a.moves
+      .filter((x) => j.winBest - winPercent(x.score) <= 3.5)
+      .map((x) => ({ from: x.from, to: x.to }));
     plies.push({
       ply: i + 1,
       color: m.color,
@@ -494,6 +649,7 @@ export async function analyzeGame({ moves, startFen, params = ANALYSIS_PARAMS, o
       fenAfter: fens[i + 1],
       cls: j.cls,
       drop: j.drop,
+      cpLoss: Math.max(0, Math.min(1000, scoreToCp(j.bestScore) - scoreToCp(j.playedScore))),
       evalWhite, // centipawns, White's point of view, after the move
       winWhite: winSeries[i + 1],
       bestSan,
@@ -510,27 +666,61 @@ export async function analyzeGame({ moves, startFen, params = ANALYSIS_PARAMS, o
       }),
       bestFrom: j.bestMove.from,
       bestTo: j.bestMove.to,
+      acceptable,
       speech: spokenText({ san: m.san, cls: j.cls, kid }),
     });
     prevDrop = j.drop;
   }
 
+  // Per-position data for the evaluation bar, suggestion arrows and engine
+  // lines: position i is the board after i moves.
+  const positions = fens.map((fen, i) => {
+    const a = analyses[i];
+    const evalWhite = i === 0 ? (a.moves.length ? whiteView(a.moves[0].score, a.turn) : 0) : plies[i - 1].evalWhite;
+    let lines = [];
+    if (a.lines && a.lines.length) {
+      lines = a.lines.map((l) => {
+        const c = new Chess(fen);
+        const san = [];
+        for (const u of l.pv.slice(0, 6)) {
+          try {
+            san.push(c.move({ from: u.slice(0, 2), to: u.slice(2, 4), promotion: u[4] }).san);
+          } catch {
+            break;
+          }
+        }
+        return { san, score: whiteView(l.score, a.turn) };
+      });
+    }
+    const best = a.moves.length ? { from: a.moves[0].from, to: a.moves[0].to } : null;
+    return { fen, evalWhite, best, lines };
+  });
+
   const weights = volatilityWeights(winSeries);
   const accs = { w: [], b: [] };
   const ws = { w: [], b: [] };
+  const loss = { w: [], b: [] };
+  const phaseOf = (p) => {
+    if (p.ply <= 20) return "opening";
+    const m = nonPawnMaterial(p.fenBefore);
+    return m.w <= 13 && m.b <= 13 ? "endgame" : "middlegame";
+  };
+  const phaseAcc = { opening: { w: [], b: [], ww: { w: [], b: [] } }, middlegame: { w: [], b: [], ww: { w: [], b: [] } }, endgame: { w: [], b: [], ww: { w: [], b: [] } } };
   plies.forEach((p, i) => {
-    accs[p.color].push(moveAccuracy(p.drop));
+    const acc = moveAccuracy(p.drop);
+    accs[p.color].push(acc);
     ws[p.color].push(weights[i]);
+    loss[p.color].push(p.cpLoss);
+    const ph = phaseAcc[phaseOf(p)];
+    ph[p.color].push(acc);
+    ph.ww[p.color].push(weights[i]);
   });
-
-  // The opening name shown in the header: the deepest one the game reached.
-  let opening = null;
-  if (!startFen) {
-    for (let p = 1; p <= sans.length && isBookPly(sans, p); p++) {
-      const o = openingAt(sans, p);
-      if (o && o.exact) opening = o.name;
-    }
+  const phases = {};
+  for (const k of Object.keys(phaseAcc)) {
+    const ph = phaseAcc[k];
+    phases[k] = { w: gameAccuracy(ph.w, ph.ww.w), b: gameAccuracy(ph.b, ph.ww.b) };
   }
+  const avg = (a) => (a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length) : null);
 
   // How many moves of each quality each side played (for the summary table).
   const counts = { w: {}, b: {} };
@@ -545,15 +735,28 @@ export async function analyzeGame({ moves, startFen, params = ANALYSIS_PARAMS, o
     if (p.drop >= 10 && (!turning || p.drop > turning.drop)) turning = p;
   });
 
+  // The opening name shown in the header: the deepest one the game reached.
+  let opening = null;
+  if (!startFen) {
+    for (let p = 1; p <= sans.length && isBookPly(sans, p); p++) {
+      const o = openingAt(sans, p);
+      if (o && o.exact) opening = o.name;
+    }
+  }
+
   return {
     counts,
     turning,
     plies,
+    positions,
     startWin: winSeries[0],
     winSeries,
     accuracy: { w: gameAccuracy(accs.w, ws.w), b: gameAccuracy(accs.b, ws.b) },
+    acpl: { w: avg(loss.w), b: avg(loss.b) },
+    phases,
     opening,
-    depth: Math.min(...analyses.map((a) => a.depth || 1)),
+    depth: Math.min(...analyses.filter((a) => a.depth).map((a) => a.depth), 99),
+    engine: engineName(),
   };
 }
 
@@ -563,56 +766,48 @@ export async function analyzeGame({ moves, startFen, params = ANALYSIS_PARAMS, o
 // moment it arrives. Call reset(fen, sans) when a position is loaded
 // (sync / rematch) and moved(moveVerbose, sansSoFar) for each new move.
 export function createLiveAnalyzer(onResult) {
-  let current = null; // analysis of the position the next move will be played from
+  // `pending` is the (possibly still running) analysis of the position the NEXT
+  // move will be played from. A move that arrives while it is still running
+  // waits for it, rather than going uncommented while the engine warms up.
+  let pending = Promise.resolve(null);
   let prevDrop = 0;
   let prevTo = null;
   let token = 0;
 
-  async function analyzeAhead(fen, myToken) {
-    const a = await engine.analyze(fen, LIVE_PARAMS).catch(() => null);
-    if (myToken === token) current = a;
-  }
+  const analyzeAhead = (fen) => engine.analyze(fen, "live").catch(() => null);
 
   return {
     reset(fen) {
       token++;
-      current = null;
       prevDrop = 0;
       prevTo = null;
-      analyzeAhead(fen, token);
+      pending = analyzeAhead(fen);
     },
     async moved(move, sansSoFar, fenBefore, fenAfter, startFen) {
       const myToken = token;
-      const a = current;
-      current = null;
-      let result = null;
-      if (a && a.moves.length) {
-        const book = !startFen && isBookPly(sansSoFar, sansSoFar.length);
-        const j = judgeMove({
-          a,
-          played: { from: move.from, to: move.to, promotion: move.promotion },
-          fenBefore,
-          san: move.san,
-          book,
-          prevOppDrop: prevDrop,
-          prevTo,
-        });
-        prevDrop = j.drop;
-        const op = !startFen ? openingAt(sansSoFar, sansSoFar.length) : null;
-        result = {
-          cls: j.cls,
-          san: move.san,
-          opening: op && op.exact ? op.name : null,
-          speech: spokenText({ san: move.san, cls: j.cls }),
-        };
+      const beforeP = pending;
+      pending = analyzeAhead(fenAfter);
+      const [a, next] = await Promise.all([beforeP, pending]);
+      if (myToken !== token || !a || !a.moves.length) return;
+      const played = { from: move.from, to: move.to, promotion: move.promotion };
+      if (!a.moves.some((x) => sameMove(x, played))) {
+        a.moves = [...a.moves, { ...played, score: afterMoveScore(next, fenAfter) }];
       }
+      const book = !startFen && isBookPly(sansSoFar, sansSoFar.length);
+      const j = judgeMove({ a, played, fenBefore, san: move.san, book, prevOppDrop: prevDrop, prevTo });
+      prevDrop = j.drop;
       prevTo = move.to;
-      analyzeAhead(fenAfter, myToken);
-      if (result) onResult(result);
+      const op = !startFen ? openingAt(sansSoFar, sansSoFar.length) : null;
+      onResult({
+        cls: j.cls,
+        san: move.san,
+        opening: op && op.exact ? op.name : null,
+        speech: spokenText({ san: move.san, cls: j.cls }),
+      });
     },
     stop() {
       token++;
-      current = null;
+      pending = Promise.resolve(null);
     },
   };
 }

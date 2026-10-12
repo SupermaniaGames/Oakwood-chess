@@ -6,6 +6,7 @@
 
 import { Chess } from "./vendor/chess.js";
 import { MATE_PUZZLES } from "./puzzle-data.js";
+import { DAILY_PUZZLE_LIMIT, puzzlesLeftToday, usePuzzleSlot } from "./storage.js";
 
 const $ = (id) => document.getElementById(id);
 const PAWN_RACE_FEN = "4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1";
@@ -23,6 +24,7 @@ export function createPuzzles({ rerender, onLeave }) {
   let busy = false; // computer is "thinking" / a wrong answer is being undone
   let flipped = false;
   let timers = [];
+  let counted = false; // has this puzzle already used one of today's slots?
 
   // pawn race
   let opponent = "computer"; // or "two"
@@ -52,6 +54,42 @@ export function createPuzzles({ rerender, onLeave }) {
     const s = $("pz-status");
     s.textContent = text;
     s.dataset.kind = kind;
+  }
+
+  // ---------- daily limit ----------
+  // Five puzzles a day. A puzzle takes a slot with its first move; see storage.js.
+
+  const LIMIT_MSG = `That's your ${DAILY_PUZZLE_LIMIT} puzzles for today — come back tomorrow for more!`;
+
+  function updateLeft() {
+    const left = puzzlesLeftToday();
+    const text = `Puzzles left today: ${left} of ${DAILY_PUZZLE_LIMIT}`;
+    $("pz-left").textContent = text;
+    const menu = document.getElementById("puzzles-left");
+    if (menu) menu.textContent = text;
+  }
+
+  // Take today's slot for this puzzle if it hasn't got one. False = none left.
+  function slot() {
+    if (counted) return true;
+    if (!usePuzzleSlot()) {
+      over = true;
+      setStatus(LIMIT_MSG, "lose");
+      updateLeft();
+      return false;
+    }
+    counted = true;
+    updateLeft();
+    return true;
+  }
+
+  // Called when a fresh puzzle is set up: if nothing is left, say so up front.
+  function checkLimitOnLoad() {
+    updateLeft();
+    if (!counted && puzzlesLeftToday() === 0) {
+      over = true;
+      setStatus(LIMIT_MSG, "lose");
+    }
   }
 
   // ---------- board hook (see renderBoard in main.js) ----------
@@ -134,6 +172,12 @@ export function createPuzzles({ rerender, onLeave }) {
   };
 
   function playMove(mv) {
+    if (!slot()) {
+      selected = null;
+      targets = [];
+      rerender();
+      return;
+    }
     selected = null;
     targets = [];
     const promotion = mv.promotion ? "q" : undefined; // always a queen here
@@ -156,6 +200,7 @@ export function createPuzzles({ rerender, onLeave }) {
     over = false;
     busy = false;
     flipped = false;
+    counted = false;
     $("pz-title").textContent = "Pawn Race";
     $("pz-hint").textContent = "Only kings and pawns. The first player to turn a pawn into a queen wins!";
     buildOptions([
@@ -164,6 +209,7 @@ export function createPuzzles({ rerender, onLeave }) {
     ]);
     showButtons({ restart: true });
     setStatus(opponent === "two" ? "White to move." : "Your move — you are White.");
+    checkLimitOnLoad();
     rerender();
   }
 
@@ -293,16 +339,19 @@ export function createPuzzles({ rerender, onLeave }) {
     busy = false;
     flipped = false;
     game = new Chess(); // only used so the board has something to read
+    counted = false;
     $("pz-title").textContent = "Knight's Tour";
     $("pz-hint").textContent = "Move the knight like a knight. Visit every square once — never the same square twice!";
     buildOptions([]);
     showButtons({ restart: true, undo: true });
     setStatus("Tap any square to place your knight.");
+    checkLimitOnLoad();
     rerender();
   }
 
   function knightClick(square) {
     if (path.length === 0) {
+      if (!slot()) return rerender();
       path = [square];
     } else if (targets.includes(square)) {
       path.push(square);
@@ -380,6 +429,7 @@ export function createPuzzles({ rerender, onLeave }) {
     const i = order.shift();
     order.push(i); // cycle: the list repeats once every puzzle has been shown
     puzzle = pool[i];
+    counted = false; // a new puzzle needs its own slot (restarting this one doesn't)
     loadMate();
   }
 
@@ -396,6 +446,7 @@ export function createPuzzles({ rerender, onLeave }) {
     $("pz-hint").textContent = `${solverColor === "w" ? "White" : "Black"} to move — checkmate in ${puzzle.mate}.`;
     showButtons({ restart: true, next: true });
     setStatus("Find the checkmate!");
+    checkLimitOnLoad();
     rerender();
   }
 
@@ -498,6 +549,7 @@ export function createPuzzles({ rerender, onLeave }) {
       clearTimers();
       mode = null;
     },
+    updateLeft,
     // Test hooks.
     _state: () => ({ mode, over, path: [...path], fen: game.fen(), puzzle, stage, targets }),
     _game: () => game,

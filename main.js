@@ -26,6 +26,7 @@ import {
   registerLiveGame,
   unregisterLiveGame,
   fetchLiveGames,
+  usersRuleMissing,
   registerOpenGame,
   unregisterOpenGame,
   fetchOpenGames,
@@ -109,6 +110,7 @@ let lobbyListed = false; // host only: is this room listed in the Online lobby?
 let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "local"
 let reviewPly = null; // null = the live position; a number = browsing earlier moves
 let reviewLastMove = null;
+let spectateTimer = 0; // 'still can\'t connect' hint for a spectator
 let boardHook = null; // set while the Review / Puzzle screens draw the board (see renderBoard)
 let reviewReturn = "game"; // screen to go back to when Game Review is closed
 let specAnalysis = null; // spectator's private analysis board: { game, last } or null
@@ -138,6 +140,8 @@ function showScreen(name) {
   el("bottom-nav").classList.toggle("hidden", name === "game" || name === "review" || name === "puzzle");
   boardHook = name === "review" ? review.hook : name === "puzzle" ? puzzles.hook : null;
   scheduleLayout();
+  // Opening the Account screen always re-reads the account's saved profile.
+  if (name === "account" && !authBusy) hydrateProfileFromCloud({ force: true }).then(renderAccountCard);
   // Credits and the "runs in your browser" note belong on the home page
   // only — during play they just take up space.
   el("app-footer").classList.toggle("hidden", name !== "home");
@@ -200,6 +204,7 @@ const puzzles = createPuzzles({
   onLeave: () => {
     puzzles.stop();
     showScreen("puzzles");
+    puzzles.updateLeft();
   },
 });
 const liveAnalyzer = createLiveAnalyzer(announceLive);
@@ -262,7 +267,10 @@ el("btn-replay-review").addEventListener("click", () => openGameReview("replay")
 
 // --- Puzzles ---
 
-el("btn-open-puzzles").addEventListener("click", () => showScreen("puzzles"));
+el("btn-open-puzzles").addEventListener("click", () => {
+  showScreen("puzzles");
+  puzzles.updateLeft();
+});
 el("btn-puzzles-back").addEventListener("click", goHome);
 document.querySelectorAll(".puzzle-tile").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -481,6 +489,132 @@ function layoutBoard() {
 window.addEventListener("resize", scheduleLayout);
 window.addEventListener("orientationchange", scheduleLayout);
 
+
+// --- Dragging pieces (chess.com style) ---
+//
+// Press a piece and drag: an enlarged copy follows the pointer (held above
+// your finger on touch screens so it isn't hidden), a grey halo marks the
+// square you're over, and the usual legal-move dots show. Letting go on a
+// square does exactly what tapping that square would — every rule check still
+// lives in the tap handlers. Plain taps are untouched.
+
+const DRAG_START_PX = 6;
+let drag = null;
+let suppressClickUntil = 0;
+
+function boardTap(square) {
+  if (boardHook && boardHook.onSquare) return boardHook.onSquare(square);
+  if (viewState !== "game") return;
+  return mode === "spectate" ? onSpecAnalysisClick(square) : onSquareClick(square);
+}
+
+function canDragOnThisBoard() {
+  if (viewState === "review" || viewState === "puzzle") return !!(boardHook && boardHook.onSquare);
+  return viewState === "game" && (mode !== "spectate" || !!specAnalysis);
+}
+
+function squareUnder(x, y) {
+  const hit = document.elementFromPoint(x, y);
+  const sq = hit && hit.closest ? hit.closest("#board .sq") : null;
+  return sq || null;
+}
+
+function startDrag(e) {
+  const origin = drag.square;
+  // Select the piece exactly as a tap would, so legal-move dots appear.
+  boardTap(origin);
+  const sqEl = boardEl.querySelector(`.sq[data-square="${origin}"]`);
+  const selectedNow = !!boardEl.querySelector(".sq.selected") || !!boardEl.querySelector(".sq.legal");
+  const pieceEl = sqEl && sqEl.querySelector(".piece-svg");
+  if (!selectedNow || !pieceEl) {
+    drag = null; // not a piece that can move right now
+    return;
+  }
+  const size = boardEl.getBoundingClientRect().width / 8;
+  drag.size = size;
+  drag.started = true;
+  sqEl.classList.add("drag-origin");
+  const float = pieceEl.cloneNode(true);
+  float.classList.add("drag-piece");
+  float.style.width = float.style.height = `${size * 1.75}px`;
+  const halo = document.createElement("div");
+  halo.className = "drag-halo";
+  halo.style.width = halo.style.height = `${size * 2.3}px`;
+  document.body.append(halo, float);
+  drag.float = float;
+  drag.halo = halo;
+  try {
+    boardEl.setPointerCapture(drag.id);
+  } catch {
+    /* pointer already gone */
+  }
+}
+
+function moveDrag(e) {
+  const lift = drag.touch ? drag.size * 1.0 : 0; // keep the piece clear of a finger
+  drag.float.style.left = `${e.clientX}px`;
+  drag.float.style.top = `${e.clientY - lift}px`;
+  const over = squareUnder(e.clientX, e.clientY);
+  drag.over = over ? over.dataset.square : null;
+  if (over) {
+    const r = over.getBoundingClientRect();
+    drag.halo.style.display = "";
+    drag.halo.style.left = `${r.left + r.width / 2}px`;
+    drag.halo.style.top = `${r.top + r.height / 2}px`;
+  } else {
+    drag.halo.style.display = "none";
+  }
+}
+
+function endDrag(e, cancelled) {
+  const d = drag;
+  drag = null;
+  if (!d || !d.started) return;
+  d.float.remove();
+  d.halo.remove();
+  const sqEl = boardEl.querySelector(`.sq[data-square="${d.square}"]`);
+  if (sqEl) sqEl.classList.remove("drag-origin");
+  suppressClickUntil = Date.now() + 60; // only the click that immediately follows a drag, not the next real tap
+  const target = cancelled ? null : d.over;
+  if (target && target !== d.square) boardTap(target);
+}
+
+boardEl.addEventListener("pointerdown", (e) => {
+  if (drag || (e.pointerType === "mouse" && e.button !== 0)) return;
+  if (!canDragOnThisBoard()) return;
+  const sq = e.target.closest ? e.target.closest(".sq") : null;
+  if (!sq || !sq.querySelector(".piece-svg")) return;
+  // A piece that is a capture target of the current selection is tapped, not dragged.
+  if (sq.classList.contains("legal")) return;
+  drag = { square: sq.dataset.square, id: e.pointerId, x0: e.clientX, y0: e.clientY, started: false, touch: e.pointerType !== "mouse" };
+});
+window.addEventListener("pointermove", (e) => {
+  if (!drag || e.pointerId !== drag.id) return;
+  if (!drag.started) {
+    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < DRAG_START_PX) return;
+    startDrag(e);
+    if (!drag) return;
+  }
+  e.preventDefault();
+  moveDrag(e);
+});
+window.addEventListener("pointerup", (e) => {
+  if (drag && e.pointerId === drag.id) endDrag(e, false);
+});
+window.addEventListener("pointercancel", (e) => {
+  if (drag && e.pointerId === drag.id) endDrag(e, true);
+});
+boardEl.addEventListener(
+  "click",
+  (e) => {
+    if (Date.now() < suppressClickUntil) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  },
+  true
+);
+
 // --- Keeping the account's profile in step across devices ---
 
 // Saves the profile to the account and adopts whatever name the account really
@@ -618,11 +752,11 @@ function renderBoard() {
 
   // Best-move arrow (Game Review): drawn in the board's own coordinates, so
   // the CSS flip turns it along with the squares.
-  const arrow = hook && hook.arrow && hook.arrow();
-  if (arrow) boardEl.appendChild(arrowElement(arrow, useFlip));
+  const arrows = hook && hook.arrows ? hook.arrows() : [];
+  for (const arrow of arrows) boardEl.appendChild(arrowElement(arrow, useFlip));
 }
 
-function arrowElement({ from, to }, reversed) {
+function arrowElement({ from, to, color = "rgba(129,182,76,0.85)" }, reversed) {
   const ns = "http://www.w3.org/2000/svg";
   const pt = (sq) => {
     const f = sq.charCodeAt(0) - 97;
@@ -647,14 +781,14 @@ function arrowElement({ from, to }, reversed) {
   line.setAttribute("y1", y1 + uy * 0.2);
   line.setAttribute("x2", bx);
   line.setAttribute("y2", by);
-  line.setAttribute("stroke", "rgba(129,182,76,0.85)");
+  line.setAttribute("stroke", color);
   line.setAttribute("stroke-width", "0.22");
   const tri = document.createElementNS(ns, "polygon");
   tri.setAttribute(
     "points",
     `${x2},${y2} ${bx - uy * 0.34},${by + ux * 0.34} ${bx + uy * 0.34},${by - ux * 0.34}`
   );
-  tri.setAttribute("fill", "rgba(129,182,76,0.85)");
+  tri.setAttribute("fill", color);
   svg.append(line, tri);
   return svg;
 }
@@ -1276,8 +1410,26 @@ function startSpectating(rawCode) {
   el("conn-state").textContent = "Connecting to the game…";
   el("conn-state").classList.remove("error");
 
+  // If nothing connects, say why instead of waiting forever: the usual causes
+  // are that the host didn't tick "Let others watch", the game is over, or the
+  // two devices are on networks that can't reach each other directly.
+  let spectateConnected = false;
+  const retryBtn = el("btn-room-retry");
+  retryBtn.classList.add("hidden");
+  retryBtn.onclick = () => startSpectating(code);
+  clearTimeout(spectateTimer);
+  spectateTimer = setTimeout(() => {
+    if (spectateConnected || mode !== "spectate" || viewState !== "room") return;
+    el("conn-state").textContent =
+      "Still can't connect. Check that the game is still going and that the host ticked “Let others watch”. If you're on different networks (mobile data vs Wi-Fi), the connection may be blocked — try the same Wi-Fi.";
+    el("conn-state").classList.add("error");
+    retryBtn.classList.remove("hidden");
+  }, 15000);
+
   room = new Room({
     onConnected: () => {
+      spectateConnected = true;
+      clearTimeout(spectateTimer);
       el("conn-state").textContent = "Connected — loading the game…";
     },
     onData: handleSpectatorData,
@@ -1288,12 +1440,15 @@ function startSpectating(rawCode) {
       el("conn-state").textContent =
         err?.type === "peer-unavailable" ? "That game isn't live any more." : describeConnError(err);
       el("conn-state").classList.add("error");
+      retryBtn.classList.remove("hidden");
     },
   });
   room.joinAsSpectator(PEER_PREFIX + code);
 }
 
 function beginSpectating() {
+  clearTimeout(spectateTimer);
+  el("btn-room-retry").classList.add("hidden");
   clock = new Clock("untimed", onClockTick, onClockFlag);
   clearClockDisplay();
   updateSideLabels();
@@ -1658,6 +1813,8 @@ function renderAccountCard() {
     el("account-signed-out").classList.add("hidden");
     el("account-signed-in").classList.remove("hidden");
     el("account-label").textContent = `Signed in as ${user.displayName || user.email || "your account"} — your rating follows you across devices.`;
+    // A short account ID: if two devices show different IDs they are NOT the same account.
+    el("account-id").textContent = `Account ID: ${String(user.uid).slice(-6)}${usersRuleMissing() ? " · Firestore rules need updating (see README)" : ""}`;
   } else {
     el("account-signed-in").classList.add("hidden");
     el("account-signed-out").classList.remove("hidden");
@@ -2327,12 +2484,47 @@ function leaveMessage() {
   return messages[mode] || "Leave this game?";
 }
 
+// Back on the Home screen asks before leaving the app. A second history entry
+// sits under whatever screen is open; pressing Back pops it, we show the
+// popup and put the entry straight back so the next Back asks again.
+let homeGuardActive = false;
+function ensureHomeGuard() {
+  if (homeGuardActive) return;
+  homeGuardActive = true;
+  history.pushState({ oakwood: "home" }, "");
+}
+function showExitModal(show) {
+  el("exit-modal").classList.toggle("hidden", !show);
+}
+el("btn-exit-stay").addEventListener("click", () => showExitModal(false));
+el("btn-exit-leave").addEventListener("click", () => {
+  homeGuardActive = false;
+  showExitModal(false);
+  try {
+    window.close(); // only works for windows a script opened
+  } catch {
+    /* ignore */
+  }
+  // Step back over our own entry, then once more to actually leave (closes an
+  // installed app; in a browser tab it returns to the page before this one).
+  history.back();
+  setTimeout(() => history.back(), 80);
+});
+ensureHomeGuard();
+
 window.addEventListener("popstate", () => {
   if (ignorePop) {
     ignorePop = false;
     return;
   }
-  if (!guardActive) return;
+  if (!guardActive) {
+    if (homeGuardActive && viewState === "home") {
+      homeGuardActive = false; // the browser just removed it
+      showExitModal(true);
+      ensureHomeGuard();
+    }
+    return;
+  }
   guardActive = false; // the browser already removed our entry
   if (needsLeaveConfirm() && !window.confirm(leaveMessage())) {
     guardActive = true; // stay put: put the guard entry back

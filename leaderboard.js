@@ -28,6 +28,14 @@ let state = null; // { db, auth, store, authFns } once ready
 let readyPromise = null;
 const authListeners = [];
 
+// True once a read/write of users/ was refused: the updated rules aren't live.
+let usersBlocked = false;
+
+// Used by the Account screen to say when the updated rules still need publishing.
+export function usersRuleMissing() {
+  return usersBlocked;
+}
+
 function currentUserInfo() {
   const user = state?.auth?.currentUser;
   if (!user) return null;
@@ -250,18 +258,30 @@ export async function fetchMyProfile() {
   await ready();
   if (!state || !state.auth.currentUser) return null;
   const uid = state.auth.currentUser.uid;
+  const { doc, getDoc, setDoc } = state.store;
   try {
-    const { doc, getDoc, setDoc } = state.store;
-    const snap = await getDoc(doc(state.db, "users", uid));
-    if (snap.exists()) return snap.data();
+    if (!usersBlocked) {
+      try {
+        const snap = await getDoc(doc(state.db, "users", uid));
+        if (snap.exists()) return snap.data();
+      } catch (err) {
+        // The users/ rule hasn't been published yet: carry on with players/,
+        // which every version of the rules allows, so sync still works.
+        if (err?.code !== "permission-denied") throw err;
+        usersBlocked = true;
+        console.warn("Oakwood Chess: Firestore rules don't allow users/ yet — using players/ instead. Publish the updated firestore.rules.");
+      }
+    }
     const legacy = await getDoc(doc(state.db, "players", uid));
     if (!legacy.exists()) return null;
     const d = legacy.data();
     const profile = { name: d.name || "", rating: d.rating ?? 1200, games: d.games ?? 0, uid };
-    try {
-      await setDoc(doc(state.db, "users", uid), profile, { merge: true });
-    } catch {
-      /* copying is best-effort; the legacy record still answers */
+    if (!usersBlocked) {
+      try {
+        await setDoc(doc(state.db, "users", uid), profile, { merge: true });
+      } catch {
+        /* copying is best-effort; the players/ record still answers */
+      }
     }
     return profile;
   } catch (err) {
@@ -308,7 +328,9 @@ async function claimUsernameFor(uid, name) {
   if (trimmed.length > 24) return { ok: false, error: "Keep it under 24 characters." };
   const key = trimmed.toLowerCase();
   const { doc, runTransaction } = state.store;
-  try {
+  // withUsers=false is the fallback for a database whose rules don't have the
+  // users/ collection yet: the handle and the public players/ row still save.
+  const attempt = async (withUsers) => {
     await runTransaction(state.db, async (tx) => {
       if (!stillMe()) throw new Error("account-changed");
       const claimRef = doc(state.db, "usernames", key);
@@ -318,10 +340,12 @@ async function claimUsernameFor(uid, name) {
       }
       const userRef = doc(state.db, "users", uid);
       const playerRef = doc(state.db, "players", uid);
-      const userSnap = await tx.get(userRef);
+      const userSnap = withUsers ? await tx.get(userRef) : null;
       const playerSnap = await tx.get(playerRef);
       const prevName =
-        (userSnap.exists() && userSnap.data().name) || (playerSnap.exists() && playerSnap.data().name) || null;
+        (userSnap && userSnap.exists() && userSnap.data().name) ||
+        (playerSnap.exists() && playerSnap.data().name) ||
+        null;
       const prevKey = prevName ? prevName.toLowerCase() : null;
       // Firestore transactions need every read before any write, so look
       // up the old claim now rather than blindly deleting it: if it was
@@ -339,9 +363,20 @@ async function claimUsernameFor(uid, name) {
       // Dual write: lock the handle, save it on the account's own profile,
       // and mirror it onto the public leaderboard row.
       tx.set(claimRef, { uid, name: trimmed });
-      tx.set(userRef, { name: trimmed, uid }, { merge: true });
+      if (withUsers) tx.set(userRef, { name: trimmed, uid }, { merge: true });
       tx.set(playerRef, { name: trimmed, uid }, { merge: true });
     });
+  };
+  try {
+    try {
+      await attempt(!usersBlocked);
+    } catch (err) {
+      if (err?.code === "permission-denied" && !usersBlocked) {
+        usersBlocked = true;
+        console.warn("Oakwood Chess: Firestore rules don't allow users/ yet — saving to players/ only. Publish the updated firestore.rules.");
+        await attempt(false);
+      } else throw err;
+    }
     return { ok: true, name: trimmed };
   } catch (err) {
     if (err?.message === "taken") return { ok: false, error: "That username is already taken." };
@@ -375,7 +410,14 @@ export async function pushProfile(profile) {
   try {
     const { doc, setDoc, serverTimestamp } = state.store;
     const data = { rating: profile.rating, games: profile.games, updatedAt: serverTimestamp() };
-    await setDoc(doc(state.db, "users", uid), { ...data, name, uid }, { merge: true });
+    if (!usersBlocked) {
+      try {
+        await setDoc(doc(state.db, "users", uid), { ...data, name, uid }, { merge: true });
+      } catch (err) {
+        if (err?.code !== "permission-denied") throw err;
+        usersBlocked = true; // rules not published yet: players/ below still syncs
+      }
+    }
     await setDoc(doc(state.db, "players", uid), { ...data, name, uid }, { merge: true });
     return { ok: true, name };
   } catch (err) {
