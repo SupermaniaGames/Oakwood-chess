@@ -203,6 +203,9 @@
       <button class="nav-btn side-nav-btn" data-nav="learn">
         <span class="nav-icon">🎓</span><span>Learn</span>
       </button>
+      <button class="nav-btn side-nav-btn" data-nav="puzzles">
+        <span class="nav-icon">🧩</span><span>Puzzles</span>
+      </button>
       <button class="nav-btn side-nav-btn" data-nav="watch">
         <span class="nav-icon">📺</span><span>Watch</span>
       </button>
@@ -338,11 +341,6 @@
             <ol id="open-games-list" class="history-list"></ol>
             <button id="btn-refresh-open" class="btn btn-ghost btn-small" style="margin-top:10px;">Refresh</button>
           </div>
-
-          <button id="btn-open-puzzles" class="btn btn-ghost btn-puzzles">
-            <span aria-hidden="true">🧩</span>
-            <span>Puzzles</span>
-          </button>
 
           <button id="btn-share-app" class="btn btn-ghost btn-share">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
@@ -596,6 +594,9 @@
 
         <!-- LEARN -->
         <div id="screen-learn" class="screen hidden">
+                    <div id="learn-tabs" class="chip-row learn-tabs" role="tablist" aria-label="Learn topics"></div>
+          <div id="learn-content" class="learn-content hidden"></div>
+          <div id="learn-basics">
           <div class="card">
             <h2>How to play chess</h2>
             <p class="muted">Chess is a game for two players. Each side starts with 16 pieces, and the goal is to trap the other player's king so it can't escape — that's called <strong>checkmate</strong>.</p>
@@ -645,6 +646,7 @@
             <h3>Winning the game</h3>
             <p class="muted">You win by putting the opponent's king in <strong>checkmate</strong>: it's under attack, and there's no move that gets it out of trouble. If nobody can make progress, the game can end in a <strong>draw</strong> instead — nobody wins.</p>
             <button id="btn-learn-play" class="btn btn-primary" style="margin-top:6px;">Try it against the computer</button>
+          </div>
           </div>
         </div>
 
@@ -767,6 +769,9 @@
       </button>
       <button class="nav-btn" data-nav="learn">
         <span class="nav-icon">🎓</span><span>Learn</span>
+      </button>
+      <button class="nav-btn" data-nav="puzzles">
+        <span class="nav-icon">🧩</span><span>Puzzles</span>
       </button>
       <button class="nav-btn" data-nav="watch">
         <span class="nav-icon">📺</span><span>Watch</span>

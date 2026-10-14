@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v8";
+const CACHE_NAME = "oakwood-chess-v9";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -14,7 +14,14 @@ const APP_SHELL = [
   "./stockfish.js",
   "./vendor/stockfish/stockfish-nnue-16-single.js",
   "./vendor/stockfish/stockfish-nnue-16-single.wasm",
-  "./icons/coach.png",
+  "./icons/coach_neutral.png",
+  "./icons/coach_happy.png",
+  "./icons/coach_shocked.png",
+  "./icons/coach_talk.png",
+  "./coach-avatar.js",
+  "./coach.js",
+  "./learn-data.js",
+  "./learn.js",
   "./analysis-worker.js",
   "./openings.js",
   "./review.js",

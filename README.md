@@ -14,7 +14,7 @@ files.
   will start ("vs Computer · 1000 · White", "Local · 3 | 2"). History and
   Share sit below. Rating, sign-in and the leaderboard live under
   **Account**; lessons under **Learn**.
-- **Puzzles** have their own button on Home (see *Puzzles* below).
+- **Puzzles** have their own button in the bottom navigation (side navigation on wide screens); see *Puzzles* below.
 - **Back on Home asks first** (an "Exit Oakwood Chess?" popup). Pulling the page
   down no longer refreshes it, so a stray swipe can't throw you out of a game.
 - **The game page** is built to fit one phone screen with no scrolling. On a
@@ -225,9 +225,27 @@ also accepts UCI or PGN move text.
 - **Options** (⚙ in the header): Quick Analysis (off = deeper, slower; applies to
   the next review), Show Evaluation Bar, Suggestion Arrows, Threat Arrows,
   Engine Lines, Move Feedback. Saved on the device.
-- **Coach picture**: put a small square image at `icons/coach.png` (128 × 128 px
-  is plenty; it's shown at 62 px) and it replaces the drawn face. If the file
-  isn't there the drawing stays.
+- **The coach explains like a teacher.** For each move you get the move's name
+  ("The knight jumps to f3."), the idea behind it, and — for a mistake — what
+  went wrong and what to look for next time. `coach.js` recognises: fork, pin,
+  skewer, discovered attack, discovered check, double check, back-rank mate,
+  smothered mate, zwischenzug (in-between move), desperado, sacrifice,
+  promotion/underpromotion, en passant, free piece, trade, recapture, hanging
+  pieces, and opening ideas (developing, central pawns, castling, moving the
+  same piece twice, early queen, king walks). Book moves also say which opening
+  it is and why it's played (`openings.js` has about 90 lines with explanations).
+  Options (⚙) → **Coach explains for: Kids / Adults** changes the wording
+  (simple words vs. proper terms). The summary screen has a few warm sentences
+  about the whole game, a turning point, and one tip based on the mistakes made.
+  Spectator voice commentary names tactics the same way.
+- **The coach's face reacts.** Pictures go in `icons/` — about 256 × 256 px,
+  square, transparent background: `coach_neutral.png` (book moves, good moves,
+  inaccuracies), `coach_happy.png` (best / great / brilliant / excellent),
+  `coach_shocked.png` (mistakes, misses, blunders) and `coach_talk.png` (open
+  mouth, swapped in while the voice is speaking). While the coach speaks the
+  face bobs; on a new reaction it hops (happy) or shakes (shocked). Missing
+  pictures are handled: no shocked picture → the neutral one shakes with a red
+  glow; no talk picture → just the bob; no neutral picture → the drawn face.
 - **Engine.** Moves are scored by **Stockfish 16** (WebAssembly, single-threaded,
   in a Web Worker — `stockfish.js` drives it over UCI). Copy the folder
   `vendor/stockfish/` (the `.js` and `.wasm` from the eval-bar demo) into the
@@ -240,7 +258,7 @@ also accepts UCI or PGN move text.
 
 ## Puzzles
 
-The **🧩 Puzzles** button on Home opens three puzzle types:
+The **🧩 Puzzles** button in the navigation opens three puzzle types:
 
 - **Pawn Race** — kings and pawns only; the first to promote a pawn to a queen
   wins. Play the computer or a friend on the same device.
@@ -254,6 +272,20 @@ The **🧩 Puzzles** button on Home opens three puzzle types:
   in `puzzle-data.js` were found in bot-vs-bot games and proven by brute-force
   search; for mate in 2 any move that really forces mate is accepted, not just
   the stored one.
+
+## Learn
+
+The Learn tab has topic chips: **Basics** (how the pieces move), **Tactics**
+(20, nine with example boards — tap *Show the move*), **Checkmates** (back-rank,
+smothered, queen-and-king, ladder, Scholar's and Fool's mate), **Openings**
+(about 70 named openings: tap one to step through the moves, see the idea in
+kid and adult wording, and who plays it), **Strategy** (opening principles,
+piece values, check-capture-threat, king safety, pawn structure, learning from
+Kasparov and Carlsen), **Endgames**, **Famous games** (Opera Game, Immortal
+Game, Kasparov–Topalov 1999, Kasparov–Deep Blue game 6 — step through with
+notes, or open the coach's Game Review) and a **Glossary**. All content lives in
+`learn-data.js` and `openings.js`; every example position and game is checked
+by the test suite.
 
 ## Moving pieces
 
@@ -505,6 +537,10 @@ multiplayer.js    Thin wrapper around PeerJS for the online room
 clock.js          Per-player countdown clock
 bot.js            Offline computer opponent (minimax + alpha-beta); also the fallback review engine
 stockfish.js      Stockfish (WebAssembly) driven over UCI, with MultiPV and live evaluation
+coach.js          What each move does (tactics, ideas) and the teacher-style wording (kids / adults)
+coach-avatar.js   The coach's face: expressions per move, talking animation
+learn.js          The Learn tab renderer (small boards, steppers)
+learn-data.js     Learn content: tactics, mates, strategy, endgames, glossary, famous games
 vendor/stockfish/ stockfish-nnue-16-single.js + .wasm (not in this repo's code — copy from the demo)
 analysis.js       Game Review engine: move labels, accuracy, kid-friendly reasons, coach text
 analysis-worker.js  Runs the analysis off the main thread

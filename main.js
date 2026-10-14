@@ -35,7 +35,10 @@ import {
 import { chooseBotMove, TIERS } from "./bot.js";
 import { createReview } from "./review.js";
 import { createPuzzles } from "./puzzles.js";
+import { createLearn } from "./learn.js";
 import { createLiveAnalyzer, stopAnalysis, CLASS_INFO } from "./analysis.js";
+import { liveSentence } from "./coach.js";
+import { getAnalysisSettings } from "./storage.js";
 import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported } from "./voice.js";
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
@@ -203,6 +206,7 @@ const puzzles = createPuzzles({
   rerender: renderBoard,
   onLeave: () => {
     puzzles.stop();
+    setNavActive("puzzles");
     showScreen("puzzles");
     puzzles.updateLeft();
   },
@@ -225,8 +229,8 @@ function reviewSetup(source) {
     return {
       moves: t.history({ verbose: true }),
       startFen: t.header().FEN || null,
-      whiteName: "White",
-      blackName: "Black",
+      whiteName: replayEntry.whiteName || "White",
+      blackName: replayEntry.blackName || "Black",
       orientation: "w",
     };
   }
@@ -247,6 +251,7 @@ function reviewSetup(source) {
     whiteName,
     blackName,
     orientation: mode === "online" || mode === "bot" ? myColor : "w",
+    side: mode === "online" || mode === "bot" ? myColor : null,
   };
 }
 
@@ -263,14 +268,26 @@ function closeReview() {
 }
 
 el("btn-review").addEventListener("click", () => openGameReview("game"));
+
+// Learn tab: famous games open straight into the coach's Game Review.
+const learn = createLearn({
+  tabsEl: el("learn-tabs"),
+  basicsEl: el("learn-basics"),
+  contentEl: el("learn-content"),
+  onReviewGame: (gm) => {
+    const g = new Chess();
+    for (const san of gm.moves.split(" ")) g.move(san);
+    const [whiteName, blackName] = gm.players.split(" vs. ").map((s) => s.trim());
+    replayEntry = { pgn: g.pgn(), whiteName: whiteName || "White", blackName: blackName || "Black" };
+    reviewReturn = "learn";
+    showScreen("review");
+    review.open({ moves: g.history({ verbose: true }), whiteName: replayEntry.whiteName, blackName: replayEntry.blackName, orientation: "w", side: null });
+  },
+});
 el("btn-replay-review").addEventListener("click", () => openGameReview("replay"));
 
 // --- Puzzles ---
 
-el("btn-open-puzzles").addEventListener("click", () => {
-  showScreen("puzzles");
-  puzzles.updateLeft();
-});
 el("btn-puzzles-back").addEventListener("click", goHome);
 document.querySelectorAll(".puzzle-tile").forEach((btn) => {
   btn.addEventListener("click", () => {
@@ -410,15 +427,22 @@ el("emoji-bar").addEventListener("click", (e) => {
 
 function announceLive(result) {
   if (mode !== "spectate") return;
+  const style = getAnalysisSettings().coachStyle;
   const cls = result.cls;
   let say = "";
   let text = "";
-  if (result.san.endsWith("#")) {
-    say = "Checkmate!";
-    text = `${result.san} — checkmate!`;
-  } else if (["book", "brilliant", "great", "blunder", "mistake", "miss"].includes(cls)) {
+  if (result.tactic) {
+    // A named idea: say what it is and explain it in a sentence.
+    const sentence = result.facts ? liveSentence(result.facts, style) : "";
+    say = `${result.tactic.name}! ${sentence}`;
+    text = `${result.san} — ${result.tactic.name}`;
+  } else if (cls === "book") {
+    const note = style === "adults" ? result.openingNote : result.openingKidNote;
+    say = `${result.speech}.${result.opening ? ` ${result.opening}.` : ""}${note ? ` ${note}` : ""}`;
+    text = `${result.san} — Book${result.opening ? ` (${result.opening})` : ""}`;
+  } else if (["brilliant", "great", "blunder", "mistake", "miss"].includes(cls)) {
     say = result.speech;
-    text = `${result.san} — ${CLASS_INFO[cls].label}${cls === "book" && result.opening ? ` (${result.opening})` : ""}`;
+    text = `${result.san} — ${CLASS_INFO[cls].label}`;
   } else if (result.san.endsWith("+")) {
     say = "Check.";
     text = `${result.san} — check`;
@@ -2159,6 +2183,10 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
     } else if (btn.dataset.nav === "learn") {
       setNavActive("learn");
       showScreen("learn");
+    } else if (btn.dataset.nav === "puzzles") {
+      setNavActive("puzzles");
+      showScreen("puzzles");
+      puzzles.updateLeft();
     } else if (btn.dataset.nav === "watch") {
       setNavActive("watch");
       showScreen("watch");

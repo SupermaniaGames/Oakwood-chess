@@ -10,6 +10,8 @@
 import { Chess } from "./vendor/chess.js";
 import { analyzeGame, analyzeThreat, winPercent, CLASS_INFO, CLASS_ORDER, stopAnalysis } from "./analysis.js";
 import { getAnalysisSettings, saveAnalysisSettings } from "./storage.js";
+import { coachLines, coachSpeech, summaryLines } from "./coach.js";
+import { initCoach, setMood, moodForClass, talkHooks, stopCoachTalking } from "./coach-avatar.js";
 import { MATE_THRESHOLD } from "./bot.js";
 import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported } from "./voice.js";
 
@@ -31,6 +33,7 @@ export function createReview({ rerender, onClose }) {
   const threats = new Map(); // fen -> {from,to} | null, filled in lazily
   let retry = null; // { game, selected, targets, ply, solved } while the player retries a move
   const jumpCursor = {}; // per move-quality: which one the summary row jumped to last
+  let perspective = null; // the colour the reader played, or null when it was both sides
 
   const fenAt = (i) => (i === 0 ? data.plies[0].fenBefore : data.plies[i - 1].fenAfter);
   const cur = () => (data && index > 0 ? data.plies[index - 1] : null);
@@ -99,17 +102,30 @@ export function createReview({ rerender, onClose }) {
   }
 
   // ----- summary phase -----
-  function summaryText() {
-    if (data.turning) {
-      const t = data.turning;
-      const num = Math.ceil(t.ply / 2);
-      return `The biggest turning point was move ${num}${t.color === "w" ? "" : "…"} (${t.san}) — it was a ${CLASS_INFO[t.cls].label.toLowerCase()}. Tap Start Review to go through it.`;
+  // The coach's opening remarks: a few warm sentences about the whole game.
+  function renderSummaryBubble() {
+    const box = $("summary-bubble");
+    box.innerHTML = "";
+    for (const line of summaryLines(data, settings.coachStyle, perspective)) {
+      const p = document.createElement("span");
+      p.className = "coach-line";
+      p.textContent = line;
+      box.appendChild(p);
     }
-    return "Both sides played very accurately. Tap Start Review to go through the game.";
+    const hint = document.createElement("span");
+    hint.className = "coach-line coach-hint";
+    hint.textContent = "Tap Start Review and I'll walk you through the moves.";
+    box.appendChild(hint);
+  }
+
+  function summaryMood() {
+    const a = perspective ? data.accuracy[perspective] : Math.max(data.accuracy.w || 0, data.accuracy.b || 0);
+    return a != null && a >= 85 ? "happy" : "neutral";
   }
 
   function renderSummary() {
-    $("summary-bubble").textContent = summaryText();
+    renderSummaryBubble();
+    setMood(summaryMood());
     $("acc-w").textContent = data.accuracy.w == null ? "–" : data.accuracy.w.toFixed(1);
     $("acc-b").textContent = data.accuracy.b == null ? "–" : data.accuracy.b.toFixed(1);
     const rows = $("review-table");
@@ -294,6 +310,17 @@ export function createReview({ rerender, onClose }) {
     }
   }
 
+  function setCoachLines(lines) {
+    const box = $("coach-detail");
+    box.innerHTML = "";
+    for (const line of lines) {
+      const span = document.createElement("span");
+      span.className = "coach-line";
+      span.textContent = line;
+      box.appendChild(span);
+    }
+  }
+
   function renderCoach() {
     const p = cur();
     const badge = $("coach-badge");
@@ -301,9 +328,7 @@ export function createReview({ rerender, onClose }) {
       badge.style.display = "none";
       $("coach-title").textContent = "Start position";
       $("coach-eval").textContent = "0.00";
-      $("coach-detail").textContent = data.opening
-        ? `We'll go through the game together. It started as the ${data.opening}.`
-        : "We'll go through the game together.";
+      setCoachLines([data.opening ? `We'll go through the game together. It started as the ${data.opening}.` : "We'll go through the game together."]);
       return;
     }
     const info = CLASS_INFO[p.cls];
@@ -312,14 +337,15 @@ export function createReview({ rerender, onClose }) {
       // Feedback off: just say which move this is, no verdict.
       badge.style.display = "none";
       $("coach-title").textContent = `${Math.ceil(p.ply / 2)}${p.color === "w" ? "." : "..."} ${p.san}`;
-      $("coach-detail").textContent = "Move feedback is turned off in the analysis options.";
+      setCoachLines(["Move feedback is turned off in the analysis options."]);
       return;
     }
+    const c = coachLines(p, settings.coachStyle);
     badge.style.display = "";
     badge.style.background = info.color;
     badge.textContent = info.mark;
-    $("coach-title").textContent = p.title;
-    $("coach-detail").textContent = p.detail;
+    $("coach-title").textContent = c.title;
+    setCoachLines(c.lines);
   }
 
   // The evaluation bar beside the board — Game Review only.
@@ -413,7 +439,20 @@ export function createReview({ rerender, onClose }) {
     drawGraph();
     updateEvalBar();
     rerender();
-    if (say && index > 0) speak(data.plies[index - 1].speech);
+    if (index > 0) setMood(moodForClass(data.plies[index - 1].cls));
+    else setMood("neutral");
+    if (say && index > 0) sayAloud(speechFor(data.plies[index - 1]));
+  }
+
+  // Speak, with the coach's mouth moving while the voice is going.
+  function sayAloud(text) {
+    if (isVoiceEnabled() && voiceSupported()) speak(text, talkHooks(text));
+    else stopCoachTalking();
+  }
+
+  // The voice: the short headline, then the first thing the coach explains.
+  function speechFor(p) {
+    return settings.moveFeedback ? coachSpeech(p, settings.coachStyle, p.speech || undefined) : p.san;
   }
 
   // ----- Retry: try to find the better move yourself -----
@@ -431,8 +470,10 @@ export function createReview({ rerender, onClose }) {
         if (ok) {
           retry.solved = true;
           setRetryMessage("That's it!", `${made.san} is ${made.san === p.bestSan ? "the best move" : "one of the best moves"} here.`, "#81b64c", "✓");
+          setMood("happy");
         } else {
           setRetryMessage("Not quite", `${made.san} isn't the move. Try again.`, "#e58f2a", "?");
+          setMood("shocked");
           const undoMe = retry;
           setTimeout(() => {
             if (retry === undoMe && !undoMe.solved) {
@@ -543,6 +584,23 @@ export function createReview({ rerender, onClose }) {
   function renderSettings() {
     const list = $("rv-settings-list");
     list.innerHTML = "";
+    // Who the coach is talking to.
+    const who = document.createElement("div");
+    who.className = "rv-set-row";
+    who.innerHTML = '<div class="rv-set-text"><b>Coach explains for</b><small>Simple words for kids, or the proper chess terms.</small></div><div class="rv-seg" role="group"><button type="button" data-style="kids">Kids</button><button type="button" data-style="adults">Adults</button></div>';
+    for (const btn of who.querySelectorAll("button")) {
+      btn.setAttribute("aria-pressed", String(settings.coachStyle === btn.dataset.style));
+      btn.onclick = () => {
+        settings = { ...settings, coachStyle: btn.dataset.style };
+        saveAnalysisSettings(settings);
+        for (const b2 of who.querySelectorAll("button")) b2.setAttribute("aria-pressed", String(b2 === btn));
+        if (data) {
+          renderSummaryBubble();
+          refresh();
+        }
+      };
+    }
+    list.appendChild(who);
     for (const [key, title, hint] of OPTIONS) {
       const row = document.createElement("div");
       row.className = "rv-set-row";
@@ -570,21 +628,6 @@ export function createReview({ rerender, onClose }) {
   function closeSettings() {
     $("review-settings").classList.add("hidden");
     if (data) refresh();
-  }
-
-  // A picture for the coach: put a small square image at icons/coach.png and
-  // it replaces the drawn face; if the file isn't there the drawing stays.
-  function loadCoachImage() {
-    const img = new Image();
-    img.onload = () => {
-      document.querySelectorAll(".coach-avatar").forEach((box) => {
-        box.innerHTML = "";
-        const c = img.cloneNode();
-        c.alt = "";
-        box.appendChild(c);
-      });
-    };
-    img.src = "icons/coach.png";
   }
 
   function wire() {
@@ -619,12 +662,13 @@ export function createReview({ rerender, onClose }) {
 
   // moves: chess.js verbose history. orientation: whose side is at the bottom
   // ("w" or "b").
-  async function open({ moves, startFen = null, whiteName = "White", blackName = "Black", orientation = "w" }) {
+  async function open({ moves, startFen = null, whiteName = "White", blackName = "Black", orientation = "w", side = null }) {
     if (!wired) {
       wire();
-      loadCoachImage();
+      initCoach();
     }
     settings = getAnalysisSettings();
+    perspective = side; // whose game this was, if one person played it
     retry = null;
     threats.clear();
     active = true;
@@ -687,6 +731,7 @@ export function createReview({ rerender, onClose }) {
     if (cancel) cancel.cancelled = true;
     stopAnalysis();
     stopSpeaking();
+    stopCoachTalking();
     delete document.body.dataset.reviewPhase;
     document.documentElement.style.removeProperty("--evalbar-w");
     $("eval-bar").classList.add("hidden");

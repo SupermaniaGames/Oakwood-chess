@@ -68,6 +68,7 @@ export const ANALYSIS_DEFAULTS = {
   threatArrows: false,
   engineLines: true,
   moveFeedback: true, // coach bubble + badge on each move
+  coachStyle: "kids", // how the coach explains: "kids" (simple words) or "adults" (proper terms)
 };
 
 export function getAnalysisSettings() {

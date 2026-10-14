@@ -30,7 +30,8 @@ export function stopSpeaking() {
 
 // Speaks `text`, cutting off whatever was being said (stepping quickly
 // through moves shouldn't queue up a backlog of old commentary).
-export function speak(text) {
+// hooks.onEnd runs when this utterance finishes (or is cut off).
+export function speak(text, hooks = {}) {
   if (!text || !isVoiceEnabled()) return false;
   const synth = window.speechSynthesis;
   synth.cancel();
@@ -38,6 +39,11 @@ export function speak(text) {
   u.rate = 1;
   u.pitch = 1;
   u.lang = document.documentElement.lang || "en";
+  if (hooks.onStart) u.onstart = hooks.onStart;
+  if (hooks.onEnd) {
+    u.onend = hooks.onEnd;
+    u.onerror = hooks.onEnd;
+  }
   synth.speak(u);
   return true;
 }

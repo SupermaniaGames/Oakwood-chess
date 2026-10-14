@@ -14,6 +14,7 @@
 import { Chess } from "./vendor/chess.js";
 import { scoreAllMoves, MATE_THRESHOLD } from "./bot.js";
 import { createStockfish } from "./stockfish.js";
+import { moveFacts, phaseOf as phaseOfPly, tacticOf } from "./coach.js";
 import { isBookPly, openingAt } from "./openings.js";
 
 // Built-in engine budgets (used when Stockfish isn't available).
@@ -639,10 +640,21 @@ export async function analyzeGame({ moves, startFen, preset = "quick", onProgres
     const acceptable = a.moves
       .filter((x) => j.winBest - winPercent(x.score) <= 3.5)
       .map((x) => ({ from: x.from, to: x.to }));
+    const sacrifice = ["n", "b", "r", "q"].includes(m.piece) && isSacrifice(fens[i], played);
+    const facts = moveFacts(fens[i], played, { ply: i + 1, prevMove: i > 0 ? moves[i - 1] : null, prevOwn: i > 1 ? moves[i - 2] : null, sacrifice });
+    const replyFacts = replyBest ? moveFacts(fens[i + 1], replyBest, { ply: i + 2, prevMove: m }) : null;
+    const bestIsPlayed = j.bestMove.from === m.from && j.bestMove.to === m.to;
+    const bestFacts = bestIsPlayed ? null : moveFacts(fens[i], j.bestMove, { ply: i + 1, prevMove: i > 0 ? moves[i - 1] : null, prevOwn: i > 1 ? moves[i - 2] : null });
     plies.push({
       ply: i + 1,
       color: m.color,
       san: m.san,
+      facts,
+      replyFacts,
+      bestFacts,
+      phase: phaseOfPly(i + 1, fens[i]),
+      opening: op ? op.name : null,
+      openingKid: op && op.exact ? op.kidNote : null,
       from: m.from,
       to: m.to,
       fenBefore: fens[i],
@@ -654,7 +666,6 @@ export async function analyzeGame({ moves, startFen, preset = "quick", onProgres
       winWhite: winSeries[i + 1],
       bestSan,
       kid,
-      opening: op ? op.name : null,
       openingNote: op && op.exact ? op.note : null,
       ...coachText({
         san: m.san,
@@ -772,6 +783,7 @@ export function createLiveAnalyzer(onResult) {
   let pending = Promise.resolve(null);
   let prevDrop = 0;
   let prevTo = null;
+  let prevMoveObj = null;
   let token = 0;
 
   const analyzeAhead = (fen) => engine.analyze(fen, "live").catch(() => null);
@@ -781,6 +793,7 @@ export function createLiveAnalyzer(onResult) {
       token++;
       prevDrop = 0;
       prevTo = null;
+      prevMoveObj = null;
       pending = analyzeAhead(fen);
     },
     async moved(move, sansSoFar, fenBefore, fenAfter, startFen) {
@@ -798,10 +811,16 @@ export function createLiveAnalyzer(onResult) {
       prevDrop = j.drop;
       prevTo = move.to;
       const op = !startFen ? openingAt(sansSoFar, sansSoFar.length) : null;
+      const facts = moveFacts(fenBefore, played, { ply: sansSoFar.length, prevMove: prevMoveObj, sacrifice: j.cls === "brilliant" });
+      prevMoveObj = move;
       onResult({
         cls: j.cls,
         san: move.san,
         opening: op && op.exact ? op.name : null,
+        openingNote: op && op.exact ? op.note : null,
+        openingKidNote: op && op.exact ? op.kidNote : null,
+        facts,
+        tactic: facts ? tacticOf(facts) : null,
         speech: spokenText({ san: move.san, cls: j.cls }),
       });
     },
