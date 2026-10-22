@@ -1,27 +1,23 @@
-// The coach's face: it reacts to each move and "talks" while the voice speaks.
+// The coach's face: it reacts to each move.
 //
-// Pictures (all optional except neutral; put them in icons/, ~256 px square,
-// transparent background):
-//   coach_neutral.png  — default; book moves, good moves, inaccuracies
-//   coach_happy.png    — best / brilliant / great / excellent moves
-//   coach_shocked.png  — mistakes, misses and blunders
-//   coach_talk.png     — open mouth; swapped in while the coach is talking
+// Pictures (in icons/, ~256 px square, transparent background):
+//   coach_neutral.png   — default; book moves, good moves, inaccuracies
+//   coach_happy.png     — best / great / brilliant / excellent moves
+//   coach_shocked.png   — mistakes, misses and blunders
+//   coach_thinking.png  — while the coach is "thinking" (its move, a hint)
 // A missing picture is handled gracefully: no shocked picture -> the neutral one
-// shakes instead; no talk picture -> the face gently bounces; no neutral picture
-// at all -> the drawn face from index.html stays.
+// shakes with a red glow; no thinking picture -> neutral; no neutral picture at
+// all -> the drawn face from index.html stays.
 
 const FILES = {
   neutral: "icons/coach_neutral.png",
   happy: "icons/coach_happy.png",
   shocked: "icons/coach_shocked.png",
-  talk: "icons/coach_talk.png",
+  thinking: "icons/coach_thinking.png",
 };
 const avail = {};
 let probed = false;
 let mood = "neutral";
-let talkToken = 0;
-let talkTimer = null;
-let mouthTimer = null;
 
 // Which face goes with which kind of move.
 export function moodForClass(cls) {
@@ -33,8 +29,8 @@ export function moodForClass(cls) {
 const boxes = () => document.querySelectorAll(".coach-avatar");
 
 function ensureImages() {
+  if (!avail.neutral) return;
   for (const box of boxes()) {
-    if (!avail.neutral) return;
     if (!box.querySelector("img.coach-img")) {
       box.innerHTML = "";
       const img = document.createElement("img");
@@ -47,16 +43,11 @@ function ensureImages() {
   }
 }
 
-function srcFor(m) {
-  if (avail[m]) return FILES[m];
-  return avail.neutral ? FILES.neutral : null;
-}
+const srcFor = (m) => (avail[m] ? FILES[m] : avail.neutral ? FILES.neutral : null);
 
-function paint(mouthOpen = false) {
+function paint() {
   ensureImages();
-  const base = srcFor(mood);
-  // The open-mouth picture is a cheerful pose, so a shocked coach keeps the shocked face (it just bobs).
-  const src = mouthOpen && avail.talk && mood !== "shocked" ? FILES.talk : base;
+  const src = srcFor(mood);
   for (const box of boxes()) {
     const img = box.querySelector("img.coach-img");
     if (img && src && img.getAttribute("src") !== src) img.setAttribute("src", src);
@@ -89,39 +80,4 @@ export function setMood(m) {
     box.classList.add("react");
   }
   paint();
-}
-
-function stopTalking() {
-  clearTimeout(talkTimer);
-  clearInterval(mouthTimer);
-  talkTimer = null;
-  mouthTimer = null;
-  for (const box of boxes()) box.classList.remove("coach-speaking");
-  paint(false);
-}
-
-// Call when the voice starts speaking `text`. Returns the callbacks to hand to
-// speak(): the face stops "talking" when the speech ends. A timer based on the
-// text length is the safety net for browsers that don't report the end.
-export function talkHooks(text) {
-  const token = ++talkToken;
-  clearTimeout(talkTimer);
-  clearInterval(mouthTimer);
-  for (const box of boxes()) box.classList.add("coach-speaking");
-  let open = false;
-  mouthTimer = setInterval(() => {
-    open = !open;
-    paint(open);
-  }, 160);
-  talkTimer = setTimeout(() => token === talkToken && stopTalking(), Math.min(14000, 700 + String(text).length * 62));
-  return {
-    onEnd: () => {
-      if (token === talkToken) stopTalking();
-    },
-  };
-}
-
-export function stopCoachTalking() {
-  talkToken++;
-  stopTalking();
 }

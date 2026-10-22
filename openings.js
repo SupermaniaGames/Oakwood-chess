@@ -182,3 +182,55 @@ export function identifyOpening(input, startFen) {
 export function allOpenings() {
   return OPENINGS.map(([moves, name, note, kidNote]) => ({ moves, name, note, kidNote: kidNote || note }));
 }
+
+// Where an opening's name comes from — the "story" the coach tells when a game
+// goes into it. Only names with a well-documented origin are listed. Matched
+// against the opening name (first match wins).
+const ORIGINS = [
+  [/Sicilian/, "named after the Italian island of Sicily — Italian players studied this reply to 1.e4 more than 400 years ago."],
+  [/Italian Game|Giuoco Piano/, "named after Italy, where players of the 1500s and 1600s loved it. \"Giuoco Piano\" is Italian for \"quiet game\"."],
+  [/Ruy Lopez/, "named after Ruy López, a Spanish priest who wrote about it in 1561. It's also called the Spanish Game."],
+  [/French Defense/, "named after a famous 1834 match between London and Paris, where the Paris players used it."],
+  [/Caro-Kann/, "named after two players, Horatio Caro and Marcus Kann, who studied it in the 1880s."],
+  [/Scandinavian/, "named after the Scandinavian players who explored it. It's also called the Center Counter."],
+  [/Pirc/, "named after the Slovenian grandmaster Vasja Pirc, who played it in the 1930s and 40s."],
+  [/Alekhine/, "named after Alexander Alekhine, the world champion who made it famous in the 1920s."],
+  [/Scotch/, "named after a 1824 correspondence match between the Edinburgh and London chess clubs."],
+  [/Vienna/, "named after Vienna, where it was popular with 19th-century players."],
+  [/Petrov/, "named after Alexander Petrov, a Russian master who analysed it in the 1820s."],
+  [/Philidor/, "named after François-André Danican Philidor, the 18th-century French master (and composer) who championed it."],
+  [/Evans Gambit/, "named after Captain William Evans, a Welsh sailor who invented it around 1827."],
+  [/King's Gambit/, "one of the oldest openings. \"Gambit\" comes from an Italian wrestling word meaning \"to trip someone up\"."],
+  [/Queen's Gambit/, "a \"gambit\" means offering a pawn on purpose — here the queen's-side c-pawn. It's the most famous opening of the 1900s."],
+  [/London System/, "named after the London 1922 tournament, where players used this setup a lot."],
+  [/Dutch/, "named after the Netherlands — a Dutch player, Elias Stein, analysed it in 1789."],
+  [/English Opening/, "named after Howard Staunton, an English master who played 1.c4 in the 1840s."],
+  [/Réti/, "named after Richard Réti, a Czech-Hungarian master who made it popular in the 1920s."],
+  [/Catalan/, "named after Catalonia, the region of Spain, after a tournament in Barcelona in 1929."],
+  [/Grünfeld/, "named after the Austrian grandmaster Ernst Grünfeld, who first played it in 1922."],
+  [/Nimzo-Indian/, "named after Aron Nimzowitsch, the Latvian grandmaster who invented the idea."],
+  [/Bogo-Indian/, "named after Efim Bogoljubov, the grandmaster who played it often."],
+  [/Najdorf/, "named after Miguel Najdorf, a Polish-Argentine grandmaster who played it all his life."],
+  [/Dragon/, "named because Black's pawns and bishop look like the dragon constellation, Draco."],
+  [/Alapin/, "named after the Russian master Semyon Alapin, who analysed it in the 1890s."],
+  [/Winawer/, "named after Szymon Winawer, a Polish master who played it in the 1800s."],
+  [/Tarrasch/, "named after Siegbert Tarrasch, a German master who loved this line."],
+  [/Berlin Defense/, "named after the Berlin school of players who analysed it in the 1800s."],
+  [/Trompowsky/, "named after Octávio Trompowsky, a Brazilian player who used it in the 1930s."],
+  [/Benko/, "named after Pál Benko, a Hungarian-American grandmaster who made it famous."],
+  [/Colle/, "named after Edgard Colle, a Belgian master who played it in the 1920s."],
+  [/Bird's Opening/, "named after Henry Bird, an English master who played 1.f4 in the 1800s."],
+  [/Grob/, "named after Henri Grob, a Swiss player who loved this unusual move."],
+  [/Slav/, "named after the Slavic masters, such as Czech players, who analysed it."],
+  [/Modern Defense/, "called \"modern\" because it follows the ideas of 20th-century hypermodern players, who let the opponent build a center and attack it later."],
+  [/Wayward Queen/, "named because the queen \"wanders\" out into the open very early."],
+  [/Bishop's Opening/, "named after the bishop, which comes out first instead of the knight."],
+  [/King's Indian/, "one of the \"Indian\" defences, where Black's pieces fight for the center from the sides rather than with pawns."],
+];
+
+// The story behind an opening's name, or null when we don't have a reliable one.
+export function openingOrigin(name) {
+  if (!name) return null;
+  for (const [re, text] of ORIGINS) if (re.test(name)) return text;
+  return null;
+}

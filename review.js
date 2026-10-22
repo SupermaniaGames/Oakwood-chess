@@ -8,12 +8,12 @@
 // what to draw (see renderBoard in main.js).
 
 import { Chess } from "./vendor/chess.js";
-import { analyzeGame, analyzeThreat, winPercent, CLASS_INFO, CLASS_ORDER, stopAnalysis } from "./analysis.js";
+import { analyzeGame, analyzeThreat, winPercent, engineProblem, CLASS_INFO, CLASS_ORDER, stopAnalysis } from "./analysis.js";
 import { getAnalysisSettings, saveAnalysisSettings } from "./storage.js";
 import { coachLines, coachSpeech, summaryLines } from "./coach.js";
-import { initCoach, setMood, moodForClass, talkHooks, stopCoachTalking } from "./coach-avatar.js";
+import { initCoach, setMood, moodForClass } from "./coach-avatar.js";
 import { MATE_THRESHOLD } from "./bot.js";
-import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported } from "./voice.js";
+import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, listVoices, getVoiceName, setVoiceName } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 const NOTABLE = new Set(["brilliant", "great", "inaccuracy", "mistake", "miss", "blunder"]);
@@ -159,7 +159,14 @@ export function createReview({ rerender, onClose }) {
       rows.appendChild(row);
     }
     renderExtra();
-    $("review-engine-note").textContent = `Analysed with ${data.engine}${data.depth && data.depth < 99 ? ` (depth ${data.depth}+)` : ""}.`;
+    const note = $("review-engine-note");
+    if (data.engine === "Stockfish 16") {
+      note.textContent = `Analysed with Stockfish 16${data.depth && data.depth < 99 ? ` (depth ${data.depth}+)` : ""}.`;
+    } else {
+      // Say so plainly: the built-in engine only looks a few moves ahead, so verdicts are rougher.
+      const why = engineProblem();
+      note.textContent = `⚠ Analysed with the built-in engine, which is much weaker than Stockfish, so some verdicts may be wrong. Stockfish couldn't start${why ? ` (${why})` : ""}. Check that the folder vendor/stockfish/ on your site has both stockfish-nnue-16-single.js and stockfish-nnue-16-single.wasm.`;
+    }
   }
 
   // Average centipawn loss and accuracy by phase of the game.
@@ -444,10 +451,8 @@ export function createReview({ rerender, onClose }) {
     if (say && index > 0) sayAloud(speechFor(data.plies[index - 1]));
   }
 
-  // Speak, with the coach's mouth moving while the voice is going.
   function sayAloud(text) {
-    if (isVoiceEnabled() && voiceSupported()) speak(text, talkHooks(text));
-    else stopCoachTalking();
+    if (isVoiceEnabled() && voiceSupported()) speak(text);
   }
 
   // The voice: the short headline, then the first thing the coach explains.
@@ -601,6 +606,26 @@ export function createReview({ rerender, onClose }) {
       };
     }
     list.appendChild(who);
+    // Which voice the coach speaks with (phones often default to a woman's voice).
+    if (voiceSupported()) {
+      const vrow = document.createElement("div");
+      vrow.className = "rv-set-row";
+      vrow.innerHTML = '<div class="rv-set-text"><b>Coach voice</b><small>Pick any voice installed on your phone. "Auto" chooses a man\'s voice.</small></div><select class="rv-select" aria-label="Coach voice"></select>';
+      const sel = vrow.querySelector("select");
+      const opts = [["", "Auto (male)"], ...listVoices().map((v) => [v.name, v.name])];
+      for (const [val, label] of opts) {
+        const o = document.createElement("option");
+        o.value = val;
+        o.textContent = label;
+        sel.appendChild(o);
+      }
+      sel.value = getVoiceName();
+      sel.onchange = () => {
+        setVoiceName(sel.value);
+        speak("Hello, I'm your chess coach.");
+      };
+      list.appendChild(vrow);
+    }
     for (const [key, title, hint] of OPTIONS) {
       const row = document.createElement("div");
       row.className = "rv-set-row";
@@ -731,7 +756,6 @@ export function createReview({ rerender, onClose }) {
     if (cancel) cancel.cancelled = true;
     stopAnalysis();
     stopSpeaking();
-    stopCoachTalking();
     delete document.body.dataset.reviewPhase;
     document.documentElement.style.removeProperty("--evalbar-w");
     $("eval-bar").classList.add("hidden");

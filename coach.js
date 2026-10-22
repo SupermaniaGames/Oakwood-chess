@@ -182,6 +182,19 @@ export function moveFacts(fenBefore, mv, ctx = {}) {
   }
   f.hangs = hangs.slice(0, 2);
 
+  // ---- protecting / retreating / attacking (the coach uses these for its own moves) ----
+  for (const p of piecesOf(g, mover)) {
+    if (p.type === "k" || p.square === m.to) continue;
+    const attacked = gb.attackers(p.square, enemy).length > 0;
+    const wasDefended = gb.attackers(p.square, mover).length > 0;
+    if (attacked && !wasDefended && g.attackers(p.square, mover).length > 0) {
+      f.defends = p.type;
+      break;
+    }
+  }
+  if (gb.attackers(m.from, enemy).length > 0 && g.attackers(m.to, enemy).length === 0 && !m.captured) f.retreats = true;
+  if (worthy.length === 1) f.attacks = worthy[0].type;
+
   // ---- opening-principle facts (early moves only) ----
   if (ply <= 24) {
     const homes = (HOME[mover] && HOME[mover][m.piece]) || [];
@@ -531,4 +544,32 @@ export function tacticOf(f) {
 export function liveSentence(f, style) {
   const kid = style !== "adults";
   return [nameLine(f, kid), ideaLine(f, kid)].filter(Boolean).join(" ");
+}
+
+// What the coach says about ITS OWN move, in the first person — short, like a
+// friend across the board. `f` are the move's facts.
+export function botSays(f, style = "kids") {
+  const kid = style !== "adults";
+  const P = NAME[f.piece];
+  if (f.mate) return pick(kid, "Checkmate! Good game.", "Checkmate. Well played.");
+  if (f.promotion) return pick(kid, "A brand new queen for me!", "I promote my pawn.");
+  if (f.castle) return pick(kid, "Time to castle and keep my king safe.", "Castling to get my king safe.");
+  if (f.doubleCheck) return "Double check!";
+  if (f.discoveredCheck) return "Discovered check!";
+  if (f.fork) return `Fork! My ${P} attacks your ${f.fork.map((t) => NAME[t]).join(" and ")}.`;
+  if (f.pin) return `I'll pin your ${NAME[f.pin[0]]}.`;
+  if (f.skewer) return `Your ${NAME[f.skewer[0]]} has to move, and then I can take the ${NAME[f.skewer[1]]}.`;
+  if (f.discovered) return `A discovered attack on your ${NAME[f.discovered.target]}!`;
+  if (f.recapture) return vary(["I capture back!", "I'll take that piece back.", "Back it comes!"], f.ply);
+  if (f.winsMaterial) return f.winsMaterial.free ? `That ${NAME[f.winsMaterial.piece]} wasn't protected — I'll take it!` : `I'll take your ${NAME[f.winsMaterial.piece]}.`;
+  if (f.captured) return f.trade ? "A fair trade." : `I take your ${NAME[f.captured]}.`;
+  if (f.check) return vary(["Check!", "Check — watch your king!"], f.ply);
+  if (f.attacks) return `My ${P} now attacks your ${NAME[f.attacks]}!`;
+  if (f.defends) return `Protecting my ${NAME[f.defends]}.`;
+  if (f.retreats) return `My ${P} steps back to safety.`;
+  if (f.develops) return vary([`Developing my ${P}.`, `Bringing out my ${P}.`, `My ${P} joins the game.`], f.ply);
+  if (f.centerPawn) return vary(["I'll grab some space in the center.", "A pawn in the middle — that's my plan."], f.ply);
+  if (f.openFile) return "My rook likes this open file.";
+  if (f.passedPawn) return "My passed pawn is getting dangerous!";
+  return vary(["Your move!", "Let's see what you do with that.", "Hmm, your turn.", "I'll keep building my position."], f.ply);
 }

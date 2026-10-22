@@ -241,18 +241,24 @@ also accepts UCI or PGN move text.
 - **The coach's face reacts.** Pictures go in `icons/` — about 256 × 256 px,
   square, transparent background: `coach_neutral.png` (book moves, good moves,
   inaccuracies), `coach_happy.png` (best / great / brilliant / excellent),
-  `coach_shocked.png` (mistakes, misses, blunders) and `coach_talk.png` (open
-  mouth, swapped in while the voice is speaking). While the coach speaks the
-  face bobs; on a new reaction it hops (happy) or shakes (shocked). Missing
-  pictures are handled: no shocked picture → the neutral one shakes with a red
-  glow; no talk picture → just the bob; no neutral picture → the drawn face.
+  `coach_shocked.png` (mistakes, misses, blunders) and `coach_thinking.png`
+  (while the coach is thinking about his own move or a hint). A new reaction
+  makes the face hop (happy) or shake (shocked). There is no talking animation.
+  Missing pictures are handled: no shocked picture → the neutral one shakes with
+  a red glow; no thinking picture → neutral; no neutral picture → the drawn face.
+- **The voice** uses the phone's built-in speech. Phones often default to a
+  woman's voice, so the coach picks a man's voice when the phone has one, and
+  lowers the pitch when it doesn't. You can choose any installed English voice
+  (or turn speech off) on the Play Coach setup screen and in the review options.
 - **Engine.** Moves are scored by **Stockfish 16** (WebAssembly, single-threaded,
   in a Web Worker — `stockfish.js` drives it over UCI). Copy the folder
   `vendor/stockfish/` (the `.js` and `.wasm` from the eval-bar demo) into the
   site. If those files are missing or the browser can't run them, review falls
   back automatically to the app's own small engine (`bot.js`) — it still works,
   but with a few moves of lookahead instead of Stockfish's; the summary says
-  which engine did the work. `analysis.js` exposes `setEngine()` to swap engines.
+  which engine did the work — and when it fell back, the summary says so in a
+  warning and says why Stockfish couldn't start. `analysis.js` exposes
+  `setEngine()` to swap engines.
   Single-threaded on purpose: the multi-threaded builds need
   cross-origin-isolation headers that GitHub Pages can't send.
 
@@ -272,6 +278,52 @@ The **🧩 Puzzles** button in the navigation opens three puzzle types:
   in `puzzle-data.js` were found in bot-vs-bot games and proven by brute-force
   search; for mate in 2 any move that really forces mate is accepted, not just
   the stored one.
+
+## Play Coach
+
+The **Play Coach** box on Home (just above Share) opens a setup screen like
+chess.com's: pick the coach's level (New to Chess 400 … Strong 1900; the default,
+**Intermediate 1100**, is meant to feel like a 1000–1200 player), pick White,
+Random or Black, choose the voice, and press Play. You play a normal game against
+Stockfish while the coach talks to you:
+
+- **After every move of yours** the coach's face turns thoughtful while Stockfish
+  judges it (the same Brilliant … Blunder judgement as Game Review), then a speech
+  bubble gives feedback — the move's name, the idea, and for a mistake what went
+  wrong and the better move — and the voice reads it aloud.
+- **After a real mistake the game pauses.** The coach says what he can now do
+  ("Take a look. I can now take your undefended bishop."), a red arrow shows it,
+  and you choose **Continue** or **Retry** (take the move back and try again).
+- **The coach comments on his own moves** in the first person ("I capture back!",
+  "Protecting my pawn.", "Fork!").
+- **Opening stories.** When the game enters a named opening — yours or his — the
+  coach tells you its name and where it comes from ("You're playing the Sicilian
+  Defense — named after the Italian island of Sicily…"). Each story is told once.
+  Origins live in `openings.js`; only names with a reliable history are included.
+- **Toolbar:** Undo (takes back your move and his reply), Hint (draws the engine's
+  best move and explains it), Resign. There is no evaluation bar during a game.
+- **When it ends** a result card shows who won and how, the coach's comment, how
+  many Great / Best / Excellent moves you played, and buttons for **Game Review**,
+  **New Game** and **Rematch**. Coach games are for practice: they don't change
+  your rating.
+- **Strength.** Each level maps to a Stockfish *Skill Level* (0–20) and a limit on
+  how many moves ahead it may look (`eloToLimits` in `coach-game.js`: 400 → skill
+  0, 1100 → 8, 1900 → 17). In test games the levels are properly ordered (1900
+  beats 1100, 1100 beats 400), but the Elo numbers are labels, not measured
+  ratings. If Stockfish can't start, the built-in bot is used instead.
+
+## Online clocks
+
+Each phone judges only **its own** clock. Every move carries the mover's remaining
+time, and each phone also reports its own running clock every few seconds, so the
+two screens stay in step even when messages arrive late. If a phone sees the
+**other** player's clock reach 0 it does not end the game: it asks the other
+phone, shows "Checking your friend's clock…", and carries on with the time that
+phone reports. Only if the other phone doesn't answer for 8 seconds does it claim
+the win on time. (Before this, each phone ran both clocks on its own, so a late
+message could end a game while the other player still had time on their clock.)
+Both players need the current version of the app. Time while a phone is asleep or
+in the background is not charged to that player.
 
 ## Learn
 
@@ -540,6 +592,7 @@ stockfish.js      Stockfish (WebAssembly) driven over UCI, with MultiPV and live
 coach.js          What each move does (tactics, ideas) and the teacher-style wording (kids / adults)
 coach-avatar.js   The coach's face: expressions per move, talking animation
 learn.js          The Learn tab renderer (small boards, steppers)
+coach-game.js     Play Coach: levels, live judging, hint/undo/retry, result card
 learn-data.js     Learn content: tactics, mates, strategy, endgames, glossary, famous games
 vendor/stockfish/ stockfish-nnue-16-single.js + .wasm (not in this repo's code — copy from the demo)
 analysis.js       Game Review engine: move labels, accuracy, kid-friendly reasons, coach text

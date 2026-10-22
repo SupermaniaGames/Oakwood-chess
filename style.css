@@ -1017,10 +1017,8 @@ body[data-screen="review"][data-review-phase="steps"] .review-lines { order: 2; 
 .coach-avatar.react.mood-happy .coach-img { animation: coachHop 0.5s ease-out; }
 .coach-avatar.react.mood-shocked .coach-img { animation: coachShake 0.45s ease-out; }
 .coach-avatar.no-shock-pic .coach-img { filter: saturate(1.25) drop-shadow(0 0 6px rgba(205, 70, 60, 0.7)); }
-.coach-avatar.coach-speaking .coach-img { animation: coachTalk 0.3s ease-in-out infinite alternate; }
 @keyframes coachHop { 0% { transform: translateY(0); } 35% { transform: translateY(-9px) scale(1.04); } 100% { transform: translateY(0); } }
 @keyframes coachShake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-5px) rotate(-2deg); } 40% { transform: translateX(5px) rotate(2deg); } 60% { transform: translateX(-3px); } 80% { transform: translateX(3px); } }
-@keyframes coachTalk { 0% { transform: scale(1) translateY(0); } 100% { transform: scale(1.04) translateY(-2px); } }
 @media (prefers-reduced-motion: reduce) { .coach-avatar .coach-img { animation: none !important; } }
 
 /* --- Learn tab --- */
@@ -1060,3 +1058,69 @@ body[data-screen="review"][data-review-phase="steps"] .review-lines { order: 2; 
 .mini-board { grid-template-rows: repeat(8, 1fr); }
 .mini-sq { min-width: 0; min-height: 0; overflow: hidden; }
 .learn-tabs { position: sticky; top: 0; z-index: 5; background: var(--ink); padding-top: 6px; }
+
+.rv-select { flex: 0 0 auto; max-width: 52%; background: var(--ink); color: var(--parchment); border: 1px solid var(--panel-line); border-radius: 8px; padding: 8px; font: inherit; }
+
+/* =====================================================================
+   Play Coach
+   ===================================================================== */
+.btn-coach-home { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; padding: 8px 14px; text-align: left; }
+.coach-home-face { width: 44px; height: 44px; object-fit: contain; flex: 0 0 auto; }
+.coach-home-text { display: flex; flex-direction: column; line-height: 1.2; }
+.coach-home-title { font-size: 1.05rem; font-weight: 800; }
+.coach-home-sub { font-size: 0.8rem; opacity: 0.85; font-weight: 600; }
+
+.coach-setup .coach-row { margin: 6px 0 4px; }
+.coach-setup-h { margin: 14px 0 6px; font-size: 1rem; }
+.coach-levels { display: flex; flex-direction: column; gap: 8px; }
+.coach-level {
+  display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 14px 16px;
+  background: var(--ink); border: 2px solid var(--panel-line); border-radius: 12px; color: var(--parchment);
+  font: inherit; font-weight: 700; cursor: pointer; text-align: left;
+}
+.coach-level small { color: var(--parchment-dim); font-weight: 600; font-size: 0.95rem; }
+.coach-level[aria-checked="true"] { border-color: #81b64c; background: #232b1c; }
+.coach-setup .btn-start { position: static; margin-top: 16px; }
+
+/* The coach beside the board while you play */
+.coach-panel { width: 100%; max-width: 640px; }
+body:not([data-coach="on"]) .coach-panel { display: none; }
+.coach-live { align-items: flex-end; }
+.coach-live .coach-avatar.has-img { flex: 0 0 64px; width: 64px; height: 64px; }
+.coach-bubbles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.coach-bubbles .coach-bubble.light { padding: 8px 12px; font-size: 0.9rem; max-height: 112px; overflow-y: auto; }
+.coach-bubbles .coach-bubble.light + .coach-bubble.light::before { display: none; }
+.coach-bubble-title { display: block; font-size: 0.98rem; margin-bottom: 2px; }
+.coach-actions { display: flex; gap: 8px; }
+.coach-actions .btn { flex: 1; padding: 12px; font-weight: 800; font-size: 1rem; }
+
+body[data-coach="on"] #btn-flip { display: none; }
+body[data-coach="on"] #btn-rematch { display: none !important; }
+
+/* The result card */
+.coach-end-card { position: relative; max-width: 420px; width: calc(100% - 24px); text-align: center; }
+.coach-end-card h3 { margin: 0; font-size: 1.5rem; }
+.coach-end-card .coach-row { text-align: left; margin: 12px 0; }
+.coach-end-close { position: absolute; top: 8px; right: 12px; background: none; border: none; color: var(--parchment-dim); font-size: 1.8rem; cursor: pointer; }
+.coach-counts { display: flex; justify-content: space-around; gap: 6px; margin: 8px 0 12px; }
+.coach-count { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.coach-count .cc-mark { width: 34px; height: 34px; border-radius: 50%; background: #5c8bb0; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+.coach-count b { font-size: 1.4rem; }
+.coach-count small { color: var(--parchment-dim); }
+.coach-end-card .btn-start { position: static; width: 100%; margin-bottom: 8px; }
+
+@media (max-width: 899px) {
+  /* A taller panel above the board, so the board takes what's left. */
+  body[data-coach="on"] { --board-size: min(calc(100vw - 16px), calc(100dvh - 410px), 640px); }
+  body[data-coach="on"] .titlebar { display: none; }
+  body[data-coach="on"][data-screen="game"] #coach-panel { order: -4; width: calc(var(--board-size) + 0px); max-width: none; }
+}
+@media (max-width: 899px) and (max-height: 700px) {
+  body[data-coach="on"] { --board-size: min(calc(100vw - 16px), calc(100dvh - 350px), 640px); }
+  body[data-coach="on"] .coach-bubbles .coach-bubble.light { font-size: 0.82rem; max-height: 84px; padding: 6px 10px; }
+  body[data-coach="on"] .captured-tray { display: none; }
+}
+
+.coach-voice-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.coach-voice-toggle { display: flex; align-items: center; gap: 8px; font-weight: 700; }
+.coach-voice-row .rv-select { flex: 1; max-width: 60%; }

@@ -36,10 +36,12 @@ import { chooseBotMove, TIERS } from "./bot.js";
 import { createReview } from "./review.js";
 import { createPuzzles } from "./puzzles.js";
 import { createLearn } from "./learn.js";
+import { initCoach } from "./coach-avatar.js";
+import { createCoachGame, COACH_LEVELS, DEFAULT_COACH_ELO } from "./coach-game.js";
 import { createLiveAnalyzer, stopAnalysis, CLASS_INFO } from "./analysis.js";
 import { liveSentence } from "./coach.js";
 import { getAnalysisSettings } from "./storage.js";
-import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported } from "./voice.js";
+import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, listVoices, getVoiceName, setVoiceName } from "./voice.js";
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
 const PEER_PREFIX = "oakwood-chess-";
@@ -113,6 +115,11 @@ let lobbyListed = false; // host only: is this room listed in the Online lobby?
 let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "local"
 let reviewPly = null; // null = the live position; a number = browsing earlier moves
 let reviewLastMove = null;
+let flagCheckTimer = 0; // waiting for the friend's phone to confirm their clock really ran out
+let clockHeartbeat = 0; // keeps both phones' view of the running clock in step
+let coachMode = false; // Play Coach: a bot game with live coaching (mode is still "bot")
+let coachThinking = false;
+let gameArrows = []; // arrows on the live board (hints, the coach's warning)
 let spectateTimer = 0; // 'still can\'t connect' hint for a spectator
 let boardHook = null; // set while the Review / Puzzle screens draw the board (see renderBoard)
 let reviewReturn = "game"; // screen to go back to when Game Review is closed
@@ -134,7 +141,7 @@ function showScreen(name) {
   viewState = name;
   document.body.dataset.screen = name; // lets CSS adapt the layout per screen
   if (name !== "game") exitReview();
-  ["home", "room", "setup", "game", "replay", "learn", "account", "watch", "review", "puzzles", "puzzle"].forEach((s) =>
+  ["home", "room", "setup", "game", "replay", "learn", "account", "watch", "review", "puzzles", "puzzle", "coach"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
   const boardVisible =
@@ -212,6 +219,180 @@ const puzzles = createPuzzles({
   },
 });
 const liveAnalyzer = createLiveAnalyzer(announceLive);
+
+// --- Play Coach ---
+//
+// A game against the computer (mode stays "bot", so saving, undo, resigning and
+// the end-of-game flow all work as they do for any computer game) with the coach
+// judging every move you make. See coach-game.js.
+
+const COACH_KEY = "oakwood.coach";
+function loadCoachChoice() {
+  try {
+    return { elo: DEFAULT_COACH_ELO, color: "w", ...JSON.parse(localStorage.getItem(COACH_KEY) || "{}") };
+  } catch {
+    return { elo: DEFAULT_COACH_ELO, color: "w" };
+  }
+}
+let coachChoice = loadCoachChoice();
+
+const coachGame = createCoachGame({
+  game: () => game,
+  myColor: () => myColor,
+  applyBotMove: (mv) => {
+    let applied = null;
+    try {
+      applied = game.move({ from: mv.from, to: mv.to, promotion: mv.promotion });
+    } catch {
+      return null;
+    }
+    exitReview();
+    lastMove = { from: applied.from, to: applied.to };
+    playMoveSound(applied);
+    if (clock) clock.switchTo(game.turn());
+    render();
+    return applied;
+  },
+  undoPlies: (n) => {
+    for (let i = 0; i < n; i++) applyLocalUndo();
+  },
+  setArrows: (arrows) => {
+    gameArrows = arrows;
+    renderBoard();
+  },
+  render: () => render(),
+  setThinking: (on) => {
+    coachThinking = on;
+    renderStatus();
+  },
+});
+
+// Turns the coach's extras (panel, Hint button, board size) on or off.
+function setCoachUi(on) {
+  coachMode = on;
+  if (on) document.body.dataset.coach = "on";
+  else delete document.body.dataset.coach;
+  el("btn-hint").classList.toggle("hidden", !on);
+  el("coach-panel").classList.toggle("hidden", !on);
+  if (on) initCoach(); // load the coach's face pictures
+  if (!on) {
+    coachThinking = false;
+    gameArrows = [];
+  }
+  scheduleLayout();
+}
+
+function renderCoachSetup() {
+  const box = el("coach-levels");
+  box.innerHTML = "";
+  for (const lvl of COACH_LEVELS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "coach-level";
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(coachChoice.elo === lvl.elo));
+    b.innerHTML = "<span></span><small></small>";
+    b.firstChild.textContent = lvl.name;
+    b.lastChild.textContent = `(${lvl.elo})`;
+    b.onclick = () => {
+      coachChoice = { ...coachChoice, elo: lvl.elo };
+      renderCoachSetup();
+    };
+    box.appendChild(b);
+  }
+  for (const chip of el("coach-colors").children) chip.classList.toggle("active", chip.dataset.color === coachChoice.color);
+  renderCoachVoice();
+}
+
+// The voice picker on the setup screen. Phones often default to a woman's voice,
+// so the coach picks a man's voice when there is one ("Auto") — or you choose.
+function renderCoachVoice() {
+  const row = document.querySelector(".coach-voice-row");
+  row.classList.toggle("hidden", !voiceSupported());
+  if (!voiceSupported()) return;
+  const on = el("coach-voice-on");
+  on.checked = isVoiceEnabled();
+  on.onchange = () => setVoiceEnabled(on.checked);
+  const sel = el("coach-voice");
+  sel.innerHTML = "";
+  for (const [val, label] of [["", "Auto (male)"], ...listVoices().map((v) => [v.name, v.name])]) {
+    const o = document.createElement("option");
+    o.value = val;
+    o.textContent = label;
+    sel.appendChild(o);
+  }
+  sel.value = getVoiceName();
+  sel.onchange = () => {
+    setVoiceName(sel.value);
+    speak("Hello, I'm your chess coach.");
+  };
+}
+// Browsers load their voice list a moment after the page does.
+if (voiceSupported() && "onvoiceschanged" in window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    if (viewState === "coach") renderCoachVoice();
+  };
+}
+
+function startCoachGame() {
+  try {
+    localStorage.setItem(COACH_KEY, JSON.stringify(coachChoice));
+  } catch {
+    /* choice just won't be remembered */
+  }
+  const color = coachChoice.color === "r" ? (Math.random() < 0.5 ? "w" : "b") : coachChoice.color;
+  mode = "bot";
+  myColor = color;
+  botElo = coachChoice.elo;
+  game.reset();
+  flipped = color === "b";
+  resetTransientState();
+  setCoachUi(true);
+  clock = new Clock("untimed", onClockTick, onClockFlag);
+  clearClockDisplay();
+  updateSideLabels();
+  el("btn-resign").classList.remove("hidden");
+  el("btn-rematch").classList.add("hidden");
+  el("chat-card").classList.add("hidden");
+  showScreen("game");
+  coachGame.start({ elo: botElo });
+  render();
+  maybeTriggerBotMove(); // the coach moves first when you play Black
+}
+
+el("btn-coach-home").addEventListener("click", () => {
+  initCoach();
+  renderCoachSetup();
+  showScreen("coach");
+});
+el("btn-coach-back").addEventListener("click", goHome);
+el("coach-colors").addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-color]");
+  if (!chip) return;
+  coachChoice = { ...coachChoice, color: chip.dataset.color };
+  renderCoachSetup();
+});
+el("btn-coach-play").addEventListener("click", startCoachGame);
+el("btn-hint").addEventListener("click", () => coachGame.hint());
+el("btn-coach-continue").addEventListener("click", () => coachGame.continueAfterPrompt());
+el("btn-coach-retry").addEventListener("click", () => coachGame.retry());
+el("btn-coach-end-close").addEventListener("click", () => el("coach-end").classList.add("hidden"));
+el("btn-coach-review").addEventListener("click", () => {
+  el("coach-end").classList.add("hidden");
+  openGameReview("game");
+});
+el("btn-coach-new").addEventListener("click", () => {
+  el("coach-end").classList.add("hidden");
+  coachGame.stop();
+  setCoachUi(false);
+  renderCoachSetup();
+  showScreen("coach");
+});
+el("btn-coach-rematch").addEventListener("click", () => {
+  el("coach-end").classList.add("hidden");
+  startCoachGame();
+});
+
 let replayEntry = null; // the history entry currently open in Replay
 
 // --- Game Review ---
@@ -241,7 +422,7 @@ function reviewSetup(source) {
     whiteName = myColor === "w" ? you : opponentName;
     blackName = myColor === "w" ? opponentName : you;
   } else if (mode === "bot") {
-    const bot = `Bot (${botElo})`;
+    const bot = coachMode ? "Coach" : `Bot (${botElo})`;
     whiteName = myColor === "w" ? you : bot;
     blackName = myColor === "w" ? bot : you;
   }
@@ -298,6 +479,8 @@ document.querySelectorAll(".puzzle-tile").forEach((btn) => {
 
 // Called whenever we leave to Home: stop anything running in the background.
 function stopExtras() {
+  coachGame.stop();
+  setCoachUi(false);
   puzzles.stop();
   review.abort();
   stopAnalysis();
@@ -477,7 +660,7 @@ function layoutBoard() {
   const mobile = window.matchMedia("(max-width: 899px)").matches;
   // Spectators get the plain full-width board: their controls sit below it and
   // would otherwise force the board smaller just to stay centred.
-  if (!mobile || viewState !== "game" || mode === "spectate") {
+  if (!mobile || viewState !== "game" || mode === "spectate" || coachMode) {
     root.style.removeProperty("--board-size");
     root.style.removeProperty("--board-pad");
     return;
@@ -776,7 +959,7 @@ function renderBoard() {
 
   // Best-move arrow (Game Review): drawn in the board's own coordinates, so
   // the CSS flip turns it along with the squares.
-  const arrows = hook && hook.arrows ? hook.arrows() : [];
+  const arrows = hook ? (hook.arrows ? hook.arrows() : []) : viewState === "game" ? gameArrows : [];
   for (const arrow of arrows) boardEl.appendChild(arrowElement(arrow, useFlip));
 }
 
@@ -926,6 +1109,14 @@ function renderStatus() {
     statusEl.textContent = "Browsing moves — tap › to return to the live game";
     return;
   }
+  if (flagCheckTimer && !gameRecorded) {
+    statusEl.textContent = "Checking your friend's clock…";
+    return;
+  }
+  if (coachMode && coachThinking && !gameRecorded) {
+    statusEl.textContent = "Coach is thinking…";
+    return;
+  }
   if (gameRecorded && endText) {
     // The game ended (possibly by resignation or timeout, which chess.js
     // knows nothing about) — keep showing the result rather than letting a
@@ -973,7 +1164,7 @@ function updateSideLabels() {
     themLabel.textContent = "Black";
   } else if (mode === "bot") {
     youLabel.innerHTML = `You &middot; ${myColor === "w" ? "White" : "Black"}`;
-    themLabel.textContent = `Bot (${botElo} Elo) · ${myColor === "w" ? "Black" : "White"}`;
+    themLabel.textContent = coachMode ? `Coach · ${myColor === "w" ? "Black" : "White"}` : `Bot (${botElo} Elo) · ${myColor === "w" ? "Black" : "White"}`;
   } else if (mode === "spectate") {
     const { white, black } = spectateNames();
     youLabel.textContent = `${white} · White`;
@@ -997,8 +1188,75 @@ function onClockTick(remaining) {
   el("clock-them").textContent = formatMs(remaining[themColor]);
 }
 
+// ---- Online clocks ----
+//
+// Each phone runs a clock for BOTH players, but messages arrive late (network
+// lag, a phone that was busy or asleep), so the copy of the opponent's clock is
+// only a guess. Rules that keep the two screens from disagreeing:
+//   - a phone ends the game on time only for ITS OWN player's clock;
+//   - if it sees the OTHER player's clock reach 0 it first asks their phone, and
+//     only if that phone doesn't answer for a few seconds does it claim the win;
+//   - every move carries the mover's remaining time, and while a game is on each
+//     phone also reports its own running clock every few seconds.
+
+const FLAG_GRACE_MS = 8000;
+
+function ownClockReport() {
+  return { type: "clock", remaining: clock.snapshot(), active: clock.active };
+}
+
+function startClockHeartbeat() {
+  clearInterval(clockHeartbeat);
+  if (mode !== "online" || !clock || !clock.enabled) return;
+  clockHeartbeat = setInterval(() => {
+    if (gameRecorded || !room || !clock) return clearInterval(clockHeartbeat);
+    room.send(ownClockReport());
+  }, 2500);
+}
+
+function stopClockSync() {
+  clearInterval(clockHeartbeat);
+  clearTimeout(flagCheckTimer);
+  clockHeartbeat = 0;
+  flagCheckTimer = 0;
+}
+
+// Their phone's report of its own clock: adopt it, and carry on if we had paused
+// to ask.
+function applyOpponentClock(remaining) {
+  if (!clock || !clock.enabled || !remaining) return;
+  const opp = myColor === "w" ? "b" : "w";
+  clock.syncRemote(opp, remaining[opp]);
+  if (flagCheckTimer) {
+    clearTimeout(flagCheckTimer);
+    flagCheckTimer = 0;
+    if (!gameRecorded && !clock.active) clock.start(game.turn()); // the stopped clock resumes
+    render();
+  }
+}
+
+function requestFlagCheck() {
+  if (flagCheckTimer || gameRecorded) return;
+  room.send({ type: "flag-check" });
+  flagCheckTimer = setTimeout(() => {
+    flagCheckTimer = 0;
+    if (gameRecorded) return;
+    // No answer: their phone is offline or asleep. Claim the win — and tell them,
+    // so both phones end the same way (`final` = they must accept it).
+    const opp = myColor === "w" ? "b" : "w";
+    room.send({ type: "flag", color: opp, final: true });
+    endGame("Your friend ran out of time (and didn't respond). You win!", "win");
+    render();
+  }, FLAG_GRACE_MS);
+  render();
+}
+
 function onClockFlag(color) {
   if (gameRecorded) return;
+  if (mode === "online" && color !== myColor) {
+    requestFlagCheck(); // not ours to call: ask their phone first
+    return;
+  }
   const winnerText = `${color === "w" ? "Black" : "White"} wins on time.`;
   if (mode === "online") room.send({ type: "flag", color });
   endGame(winnerText, mode === "online" ? (color === myColor ? "loss" : "win") : null);
@@ -1062,13 +1320,21 @@ function applyMove({ from, to, promotion }) {
   lastMove = { from, to };
   playMoveSound(move);
   if (clock) clock.switchTo(game.turn());
-  if (mode === "online") room.send({ type: "move", from, to, promotion });
+  if (mode === "online") room.send({ type: "move", from, to, promotion, remaining: clock && clock.enabled ? clock.snapshot() : undefined });
   if (mode === "local") saveLocalProgress();
-  if (mode === "bot") maybeTriggerBotMove();
+  if (mode === "bot") {
+    if (coachMode) coachGame.onPlayerMove();
+    else maybeTriggerBotMove();
+  }
   return move;
 }
 
 function maybeTriggerBotMove() {
+  if (coachMode) {
+    // In Play Coach the coach decides when to move (after judging your move).
+    if (mode === "bot" && viewState === "game" && !gameRecorded && game.turn() !== myColor && !game.isGameOver() && !coachGame.isBusy()) coachGame.requestBotMove();
+    return;
+  }
   if (mode !== "bot" || viewState !== "game") return;
   if (game.isGameOver() || gameRecorded) return;
   if (game.turn() === myColor) return;
@@ -1141,6 +1407,9 @@ function applyRematch() {
 // ---------- Local / online setup ----------
 
 function resetTransientState() {
+  stopClockSync();
+  coachGame.stop();
+  setCoachUi(false);
   selected = null;
   legalTargets = [];
   lastMove = null;
@@ -1583,6 +1852,7 @@ function beginOnlineGame() {
   clock = new Clock(timeControlKey, onClockTick, onClockFlag);
   clearClockDisplay();
   clock.start("w");
+  startClockHeartbeat();
   updateSideLabels();
   el("btn-resign").classList.remove("hidden");
   el("btn-rematch").classList.add("hidden");
@@ -1603,17 +1873,32 @@ function handlePeerData(data) {
       lastMove = { from: data.from, to: data.to };
       if (applied) playMoveSound(applied);
       if (clock) clock.switchTo(game.turn());
+      // The mover's own phone knows exactly how much time it has left.
+      if (clock && data.remaining) applyOpponentClock(data.remaining);
       render();
       break;
     }
+    case "clock":
+      applyOpponentClock(data.remaining);
+      break;
+    case "flag-check":
+      // They think our clock ran out: tell them the truth about it.
+      if (clock && clock.enabled && !gameRecorded) room.send(ownClockReport());
+      break;
     case "resign":
       endGame("Your friend resigned. You win!", "win");
       render();
       break;
-    case "flag":
+    case "flag": {
+      if (data.color === myColor && !data.final && clock && clock.enabled && clock.remainingNow(myColor) > 1500) {
+        // They say OUR clock ran out, but it hasn't: correct them instead of ending the game.
+        room.send(ownClockReport());
+        break;
+      }
       endGame(`${data.color === "w" ? "Black" : "White"} wins on time.`, data.color === myColor ? "loss" : "win");
       render();
       break;
+    }
     case "init-ack":
       opponentName = data.name || "Friend";
       opponentRating = typeof data.rating === "number" ? data.rating : 1200;
@@ -1654,6 +1939,8 @@ function handlePeerData(data) {
 function endGame(text, outcome = null) {
   if (gameRecorded) return;
   gameRecorded = true;
+  stopClockSync();
+  if (coachMode) coachGame.onGameEnd(text);
   if (clock) clock.stop();
   statusEl.textContent = text;
   endText = text;
@@ -1740,6 +2027,10 @@ el("btn-request-decline").addEventListener("click", () => {
 });
 
 el("btn-undo").addEventListener("click", () => {
+  if (coachMode) {
+    coachGame.undo();
+    return;
+  }
   if (!mode || viewState !== "game" || game.history().length === 0) return;
   if (mode === "local") {
     applyLocalUndo();

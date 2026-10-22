@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v9";
+const CACHE_NAME = "oakwood-chess-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -17,8 +17,9 @@ const APP_SHELL = [
   "./icons/coach_neutral.png",
   "./icons/coach_happy.png",
   "./icons/coach_shocked.png",
-  "./icons/coach_talk.png",
+  "./icons/coach_thinking.png",
   "./coach-avatar.js",
+  "./coach-game.js",
   "./coach.js",
   "./learn-data.js",
   "./learn.js",

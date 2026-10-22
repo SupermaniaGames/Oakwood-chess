@@ -342,6 +342,14 @@
             <button id="btn-refresh-open" class="btn btn-ghost btn-small" style="margin-top:10px;">Refresh</button>
           </div>
 
+          <button id="btn-coach-home" class="btn btn-primary btn-coach-home">
+            <img class="coach-home-face" src="icons/coach_neutral.png" alt="" onerror="this.remove()" />
+            <span class="coach-home-text">
+              <span class="coach-home-title">Play Coach</span>
+              <span class="coach-home-sub">A friendly game with live tips</span>
+            </span>
+          </button>
+
           <button id="btn-share-app" class="btn btn-ghost btn-share">
             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>
             <span>Share Oakwood Chess</span>
@@ -395,6 +403,20 @@
 
         <!-- PLAYING -->
         <div id="screen-game" class="screen hidden">
+          <div id="coach-panel" class="coach-panel hidden">
+            <div class="coach-row coach-live">
+              <div class="coach-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M6 64c2-14 12-20 26-20s24 6 26 20z" fill="#3b4a5a"/><path d="M24 44l8 10 8-10-4-3h-8z" fill="#f1f1ee"/><circle cx="32" cy="27" r="15" fill="#e0a981"/><path d="M17 27c-1-12 6-17 15-17s16 5 15 17c-2-6-6-9-15-9s-13 3-15 9z" fill="#6a4a32"/><path d="M17 30c0 11 6 18 15 18s15-7 15-18c-3 6-7 8-15 8s-12-2-15-8z" fill="#6a4a32"/><circle cx="26" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><circle cx="38" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><path d="M30.2 27h3.6" stroke="#2a2a2a" stroke-width="1.6"/><path d="M27 38c3 2.5 7 2.5 10 0" stroke="#f1f1ee" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+              <div class="coach-bubbles">
+                <div id="coach-b1" class="coach-bubble light hidden"></div>
+                <div id="coach-b2" class="coach-bubble light hidden"></div>
+                <div id="coach-actions" class="coach-actions hidden">
+                  <button id="btn-coach-continue" class="btn btn-ghost">Continue</button>
+                  <button id="btn-coach-retry" class="btn btn-primary">Retry</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="card game-card">
             <div id="request-banner" class="request-banner hidden">
               <p id="request-text"></p>
@@ -446,6 +468,9 @@
               <button id="btn-rematch" class="btn tool hidden">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/></svg><span id="rematch-label">New game</span>
               </button>
+              <button id="btn-hint" class="btn tool hidden" aria-label="Hint">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 18h6"/><path d="M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg><span>Hint</span>
+              </button>
               <button id="btn-review" class="btn tool hidden">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 15 4-5 3 3 5-7"/></svg><span>Review</span>
               </button>
@@ -476,6 +501,35 @@
               <button id="btn-replay-review" class="btn btn-primary btn-small">Game Review</button>
             </div>
             <button id="btn-replay-back" class="btn btn-ghost btn-small" style="margin-top:10px;">Back to home</button>
+          </div>
+        </div>
+
+        <!-- PLAY COACH: choose a level and a colour -->
+        <div id="screen-coach" class="screen hidden">
+          <div class="card coach-setup">
+            <div class="review-head">
+              <button id="btn-coach-back" class="review-back" aria-label="Back">&#8592;</button>
+              <h2>Play Coach</h2>
+              <span class="review-head-gap"></span>
+            </div>
+            <div class="coach-row">
+              <div class="coach-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M6 64c2-14 12-20 26-20s24 6 26 20z" fill="#3b4a5a"/><path d="M24 44l8 10 8-10-4-3h-8z" fill="#f1f1ee"/><circle cx="32" cy="27" r="15" fill="#e0a981"/><path d="M17 27c-1-12 6-17 15-17s16 5 15 17c-2-6-6-9-15-9s-13 3-15 9z" fill="#6a4a32"/><path d="M17 30c0 11 6 18 15 18s15-7 15-18c-3 6-7 8-15 8s-12-2-15-8z" fill="#6a4a32"/><circle cx="26" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><circle cx="38" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><path d="M30.2 27h3.6" stroke="#2a2a2a" stroke-width="1.6"/><path d="M27 38c3 2.5 7 2.5 10 0" stroke="#f1f1ee" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+              <div class="coach-bubble light"><span class="coach-line">Welcome! I'd love to play a friendly game together. I'll tell you how you're doing after every move.</span></div>
+            </div>
+            <h3 class="coach-setup-h">Choose my level</h3>
+            <div id="coach-levels" class="coach-levels" role="radiogroup" aria-label="Coach level"></div>
+            <h3 class="coach-setup-h">You play</h3>
+            <div id="coach-colors" class="chip-row" role="radiogroup" aria-label="Your colour">
+              <button type="button" class="chip" data-color="w">White</button>
+              <button type="button" class="chip" data-color="r">Random</button>
+              <button type="button" class="chip" data-color="b">Black</button>
+            </div>
+            <h3 class="coach-setup-h">Coach voice</h3>
+            <div class="coach-voice-row">
+              <label class="coach-voice-toggle"><input type="checkbox" id="coach-voice-on" /> <span>Speak aloud</span></label>
+              <select id="coach-voice" class="rv-select" aria-label="Coach voice"></select>
+            </div>
+            <button id="btn-coach-play" class="btn btn-start">Play</button>
           </div>
         </div>
 
@@ -723,6 +777,24 @@
             <h3>ChessBase India</h3>
             <p class="muted">News and coverage of Indian and international chess.</p>
           </a>
+        </div>
+
+        <div id="coach-end" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="coach-end-title">
+          <div class="modal-card coach-end-card">
+            <button id="btn-coach-end-close" class="coach-end-close" aria-label="Close">&times;</button>
+            <h3 id="coach-end-title">Game over</h3>
+            <p id="coach-end-sub" class="muted"></p>
+            <div class="coach-row">
+              <div class="coach-avatar"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M6 64c2-14 12-20 26-20s24 6 26 20z" fill="#3b4a5a"/><path d="M24 44l8 10 8-10-4-3h-8z" fill="#f1f1ee"/><circle cx="32" cy="27" r="15" fill="#e0a981"/><path d="M17 27c-1-12 6-17 15-17s16 5 15 17c-2-6-6-9-15-9s-13 3-15 9z" fill="#6a4a32"/><path d="M17 30c0 11 6 18 15 18s15-7 15-18c-3 6-7 8-15 8s-12-2-15-8z" fill="#6a4a32"/><circle cx="26" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><circle cx="38" cy="27" r="4.2" fill="none" stroke="#2a2a2a" stroke-width="1.6"/><path d="M30.2 27h3.6" stroke="#2a2a2a" stroke-width="1.6"/><path d="M27 38c3 2.5 7 2.5 10 0" stroke="#f1f1ee" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+              <div id="coach-end-bubble" class="coach-bubble light"></div>
+            </div>
+            <div id="coach-end-counts" class="coach-counts"></div>
+            <button id="btn-coach-review" class="btn btn-start">Game Review</button>
+            <div class="controls">
+              <button id="btn-coach-new" class="btn btn-ghost">New Game</button>
+              <button id="btn-coach-rematch" class="btn btn-ghost">Rematch</button>
+            </div>
+          </div>
         </div>
 
         <div id="exit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="exit-title">

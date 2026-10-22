@@ -27,6 +27,7 @@ export function createStockfish(url = DEFAULT_URL) {
   let worker = null;
   let failed = false;
   let multipvSet = 1;
+  let skillSet = 20; // Stockfish's own default: full strength
   let job = null; // the search currently running
   const queue = [];
 
@@ -91,6 +92,11 @@ export function createStockfish(url = DEFAULT_URL) {
       worker.postMessage(`setoption name MultiPV value ${job.multipv}`);
       multipvSet = job.multipv;
     }
+    const skill = job.skill == null ? 20 : job.skill;
+    if (skill !== skillSet) {
+      worker.postMessage(`setoption name Skill Level value ${skill}`);
+      skillSet = skill;
+    }
     worker.postMessage(`position fen ${job.fen}`);
     worker.postMessage(`go depth ${job.depth} movetime ${job.movetime}`);
   }
@@ -110,9 +116,16 @@ export function createStockfish(url = DEFAULT_URL) {
   return {
     ready,
     // Top `multipv` lines for a position, searched to `depth` or `movetime` ms,
-    // whichever comes first.
-    analyze(fen, { depth = 12, movetime = 1500, multipv = 3 } = {}) {
-      return submit({ fen, depth, movetime, multipv, onProgress: null });
+    // whichever comes first. `skill` (0-20) weakens it on purpose — used for the
+    // computer opponent; analysis always leaves it at 20.
+    analyze(fen, { depth = 12, movetime = 1500, multipv = 3, skill = 20 } = {}) {
+      return submit({ fen, depth, movetime, multipv, skill, onProgress: null });
+    },
+    // A move for the computer opponent at a given strength. Resolves to a UCI
+    // move such as "e2e4", or null.
+    async play(fen, { skill = 20, depth = 8, movetime = 500 } = {}) {
+      const res = await submit({ fen, depth, movetime, multipv: 1, skill, onProgress: null });
+      return res && res.best ? res.best : null;
     },
     // The live score. Cancels whatever evaluate() was running or waiting.
     evaluate(fen, { depth = 14, movetime = 4000, onProgress } = {}) {

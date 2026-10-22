@@ -150,6 +150,8 @@ export class Room {
   // side it came from (a bare "resign" doesn't say who resigned).
   _mirrorToSpectators(message, from) {
     if (!this.isHost) return;
+    // Clock bookkeeping between the two players isn't for spectators.
+    if (message && (message.type === "clock" || message.type === "flag-check")) return;
     for (const conn of this.spectatorConns) {
       if (conn.open) conn.send({ ...message, _from: from });
     }

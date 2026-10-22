@@ -190,13 +190,17 @@ const botEngine = makeDefaultEngine();
 // quietly falls back to the built-in engine above.
 let sf = null;
 let sfStatus = "idle"; // idle | ready | failed
+let sfFailReason = "";
 function getStockfish() {
   if (sfStatus === "failed") return null;
   if (!sf) {
     sf = createStockfish();
     sf.ready.then(
       () => (sfStatus = "ready"),
-      () => (sfStatus = "failed")
+      (err) => {
+        sfStatus = "failed";
+        sfFailReason = (err && err.message) || "unknown error";
+      }
     );
   }
   return sf;
@@ -255,6 +259,12 @@ export function setEngine(e) {
 // Which engine actually did the work ("Stockfish 16" or "Built-in engine").
 export function engineName() {
   return sfStatus === "ready" ? "Stockfish 16" : "Built-in engine";
+}
+
+// Why Stockfish isn't being used (empty when it is, or hasn't been tried yet).
+export function engineProblem() {
+  if (sfStatus === "ready" || sfStatus === "idle") return "";
+  return sfFailReason || "it could not be started";
 }
 
 // Live score for the evaluation bar. onUpdate({cp, depth, best}) is called as
@@ -567,6 +577,89 @@ function nonPawnMaterial(fen) {
   return m;
 }
 
+// Everything the review shows about ONE move: its quality, the coach's facts
+// about it, the better move, and so on. `a` is the engine's analysis of the
+// position before the move and `next` of the position after it. Shared by the
+// whole-game review and the live coaching in Play with Coach.
+export function buildPly({ i, a, next, fens, moves, sans, startFen, prevDrop }) {
+    const m = moves[i];
+    const played = { from: m.from, to: m.to, promotion: m.promotion };
+    const bookNow = !startFen && isBookPly(sans, i + 1);
+    const j = judgeMove({
+      a,
+      played,
+      fenBefore: fens[i],
+      san: m.san,
+      book: bookNow,
+      prevOppDrop: prevDrop,
+      prevTo: i > 0 ? moves[i - 1].to : null,
+    });
+    const replyBest = next && next.moves[0] ? next.moves[0] : null;
+    let kid = null;
+    if (["inaccuracy", "mistake", "miss", "blunder"].includes(j.cls)) {
+      kid = kidTag({
+        fenBefore: fens[i],
+        fenAfter: fens[i + 1],
+        judged: j,
+        replyBest,
+        replyScore: replyBest ? replyBest.score : null,
+      });
+    }
+    const evalWhite = whiteView(j.playedScore, a.turn);
+    let bestSan = null;
+    try {
+      bestSan = new Chess(fens[i]).move(j.bestMove).san;
+    } catch {
+      /* best move couldn't be rendered; the text just omits it */
+    }
+    const op = !startFen ? openingAt(sans, i + 1) : null;
+    // Moves about as good as the best one: "Retry" accepts any of them.
+    const acceptable = a.moves
+      .filter((x) => j.winBest - winPercent(x.score) <= 3.5)
+      .map((x) => ({ from: x.from, to: x.to }));
+    const sacrifice = ["n", "b", "r", "q"].includes(m.piece) && isSacrifice(fens[i], played);
+    const facts = moveFacts(fens[i], played, { ply: i + 1, prevMove: i > 0 ? moves[i - 1] : null, prevOwn: i > 1 ? moves[i - 2] : null, sacrifice });
+    const replyFacts = replyBest ? moveFacts(fens[i + 1], replyBest, { ply: i + 2, prevMove: m }) : null;
+    const bestIsPlayed = j.bestMove.from === m.from && j.bestMove.to === m.to;
+    const bestFacts = bestIsPlayed ? null : moveFacts(fens[i], j.bestMove, { ply: i + 1, prevMove: i > 0 ? moves[i - 1] : null, prevOwn: i > 1 ? moves[i - 2] : null });
+    const ply = {
+      ply: i + 1,
+      color: m.color,
+      san: m.san,
+      facts,
+      replyFacts,
+      bestFacts,
+      phase: phaseOfPly(i + 1, fens[i]),
+      opening: op ? op.name : null,
+      openingKid: op && op.exact ? op.kidNote : null,
+      from: m.from,
+      to: m.to,
+      fenBefore: fens[i],
+      fenAfter: fens[i + 1],
+      cls: j.cls,
+      drop: j.drop,
+      cpLoss: Math.max(0, Math.min(1000, scoreToCp(j.bestScore) - scoreToCp(j.playedScore))),
+      evalWhite, // centipawns, White's point of view, after the move
+      winWhite: winPercent(evalWhite),
+      bestSan,
+      kid,
+      openingNote: op && op.exact ? op.note : null,
+      ...coachText({
+        san: m.san,
+        cls: j.cls,
+        bestSan,
+        kid,
+        openingNote: op && op.exact ? op.note : null,
+        openingName: op ? op.name : null,
+      }),
+      bestFrom: j.bestMove.from,
+      bestTo: j.bestMove.to,
+      acceptable,
+      speech: spokenText({ san: m.san, cls: j.cls, kid }),
+    };
+    return { ply, j, evalWhite };
+}
+
 // moves: chess.js verbose history. Returns
 // { plies, positions, counts, acpl, phases, accuracy:{w,b}, opening, depth, engine }.
 // onProgress(done, total); cancel is { cancelled: boolean }.
@@ -602,85 +695,10 @@ export async function analyzeGame({ moves, startFen, preset = "quick", onProgres
   const winSeries = [winPercent(analyses[0].moves.length ? whiteView(analyses[0].moves[0].score, analyses[0].turn) : 0)];
 
   for (let i = 0; i < moves.length; i++) {
-    const a = analyses[i];
-    const m = moves[i];
-    const played = { from: m.from, to: m.to, promotion: m.promotion };
-    const bookNow = !startFen && isBookPly(sans, i + 1);
-    const j = judgeMove({
-      a,
-      played,
-      fenBefore: fens[i],
-      san: m.san,
-      book: bookNow,
-      prevOppDrop: prevDrop,
-      prevTo: i > 0 ? moves[i - 1].to : null,
-    });
-    const next = analyses[i + 1];
-    const replyBest = next && next.moves[0] ? next.moves[0] : null;
-    let kid = null;
-    if (["inaccuracy", "mistake", "miss", "blunder"].includes(j.cls)) {
-      kid = kidTag({
-        fenBefore: fens[i],
-        fenAfter: fens[i + 1],
-        judged: j,
-        replyBest,
-        replyScore: replyBest ? replyBest.score : null,
-      });
-    }
-    const evalWhite = whiteView(j.playedScore, a.turn);
-    winSeries.push(winPercent(evalWhite));
-    let bestSan = null;
-    try {
-      bestSan = new Chess(fens[i]).move(j.bestMove).san;
-    } catch {
-      /* best move couldn't be rendered; the text just omits it */
-    }
-    const op = !startFen ? openingAt(sans, i + 1) : null;
-    // Moves about as good as the best one: "Retry" accepts any of them.
-    const acceptable = a.moves
-      .filter((x) => j.winBest - winPercent(x.score) <= 3.5)
-      .map((x) => ({ from: x.from, to: x.to }));
-    const sacrifice = ["n", "b", "r", "q"].includes(m.piece) && isSacrifice(fens[i], played);
-    const facts = moveFacts(fens[i], played, { ply: i + 1, prevMove: i > 0 ? moves[i - 1] : null, prevOwn: i > 1 ? moves[i - 2] : null, sacrifice });
-    const replyFacts = replyBest ? moveFacts(fens[i + 1], replyBest, { ply: i + 2, prevMove: m }) : null;
-    const bestIsPlayed = j.bestMove.from === m.from && j.bestMove.to === m.to;
-    const bestFacts = bestIsPlayed ? null : moveFacts(fens[i], j.bestMove, { ply: i + 1, prevMove: i > 0 ? moves[i - 1] : null, prevOwn: i > 1 ? moves[i - 2] : null });
-    plies.push({
-      ply: i + 1,
-      color: m.color,
-      san: m.san,
-      facts,
-      replyFacts,
-      bestFacts,
-      phase: phaseOfPly(i + 1, fens[i]),
-      opening: op ? op.name : null,
-      openingKid: op && op.exact ? op.kidNote : null,
-      from: m.from,
-      to: m.to,
-      fenBefore: fens[i],
-      fenAfter: fens[i + 1],
-      cls: j.cls,
-      drop: j.drop,
-      cpLoss: Math.max(0, Math.min(1000, scoreToCp(j.bestScore) - scoreToCp(j.playedScore))),
-      evalWhite, // centipawns, White's point of view, after the move
-      winWhite: winSeries[i + 1],
-      bestSan,
-      kid,
-      openingNote: op && op.exact ? op.note : null,
-      ...coachText({
-        san: m.san,
-        cls: j.cls,
-        bestSan,
-        kid,
-        openingNote: op && op.exact ? op.note : null,
-        openingName: op ? op.name : null,
-      }),
-      bestFrom: j.bestMove.from,
-      bestTo: j.bestMove.to,
-      acceptable,
-      speech: spokenText({ san: m.san, cls: j.cls, kid }),
-    });
-    prevDrop = j.drop;
+    const built = buildPly({ i, a: analyses[i], next: analyses[i + 1], fens, moves, sans, startFen, prevDrop });
+    plies.push(built.ply);
+    winSeries.push(built.ply.winWhite);
+    prevDrop = built.j.drop;
   }
 
   // Per-position data for the evaluation bar, suggestion arrows and engine
@@ -833,4 +851,57 @@ export function createLiveAnalyzer(onResult) {
 
 export function stopAnalysis() {
   engine.stop && engine.stop();
+}
+
+// ---------- Live helpers for Play with Coach ----------
+
+// Analysis results are remembered (by position and depth) so the position the
+// player is about to move from — analysed while they think — doesn't have to be
+// searched a second time when they move.
+const analysisCache = new Map();
+export function analyzeCached(fen, preset = "live") {
+  const key = `${preset}|${fen}`;
+  if (!analysisCache.has(key)) {
+    const p = engine.analyze(fen, preset).catch((e) => {
+      analysisCache.delete(key);
+      throw e;
+    });
+    analysisCache.set(key, p);
+    if (analysisCache.size > 60) analysisCache.delete(analysisCache.keys().next().value);
+  }
+  return analysisCache.get(key);
+}
+
+// Judge the move just played, as the review would. `moves` is the full game so
+// far (chess.js verbose history, the new move last); `prevDrop` is the previous
+// move's win-% drop (so a missed chance can be spotted). Returns the ply object
+// (same shape as in analyzeGame) plus its win-% drop.
+export async function judgeLastMove({ moves, startFen = null, prevDrop = 0, preset = "live" }) {
+  const g = startFen ? new Chess(startFen) : new Chess();
+  const fens = [g.fen()];
+  for (const m of moves) {
+    g.move({ from: m.from, to: m.to, promotion: m.promotion });
+    fens.push(g.fen());
+  }
+  const i = moves.length - 1;
+  const [a, next] = await Promise.all([analyzeCached(fens[i], preset), analyzeCached(fens[i + 1], preset)]);
+  const played = { from: moves[i].from, to: moves[i].to, promotion: moves[i].promotion };
+  const aa = { ...a, moves: [...a.moves] };
+  if (!aa.moves.some((x) => sameMove(x, played))) aa.moves.push({ ...played, score: afterMoveScore(next, fens[i + 1]) });
+  const built = buildPly({ i, a: aa, next, fens, moves, sans: moves.map((m) => m.san), startFen, prevDrop });
+  return { ply: built.ply, drop: built.j.drop, evalWhite: built.evalWhite, bestMove: built.j.bestMove };
+}
+
+// The engine's best move here, for a hint: { from, to, san, facts } or null.
+export async function bestMoveFor(fen, preset = "live") {
+  const a = await analyzeCached(fen, preset);
+  if (!a.moves.length) return null;
+  const best = a.moves[0];
+  let san = null;
+  try {
+    san = new Chess(fen).move(best).san;
+  } catch {
+    /* ignore */
+  }
+  return { from: best.from, to: best.to, promotion: best.promotion, san, facts: moveFacts(fen, best, { ply: 99 }), score: best.score };
 }

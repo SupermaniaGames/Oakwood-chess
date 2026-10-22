@@ -96,6 +96,24 @@ export class Clock {
     }
   }
 
+  // What a side has left right now, counting the time its clock has been running.
+  remainingNow(color) {
+    if (!this.enabled) return null;
+    if (this.active === color) return Math.max(0, this.remaining[color] - (Date.now() - this.turnStarted));
+    return this.remaining[color];
+  }
+
+  // Take one side's time from that side's OWN device. In an online game each
+  // phone is the only reliable judge of its own player's clock (the other phone
+  // can only guess, because messages arrive late). The report is "as of now", so
+  // a running clock restarts its elapsed count from here.
+  syncRemote(color, ms) {
+    if (!this.enabled || typeof ms !== "number" || !isFinite(ms)) return;
+    this.remaining[color] = Math.max(0, ms);
+    if (this.active === color) this.turnStarted = Date.now();
+    if (this.onTick) this.onTick({ ...this.remaining });
+  }
+
   snapshot() {
     if (this.active) this._commit();
     return { w: this.remaining.w, b: this.remaining.b };
