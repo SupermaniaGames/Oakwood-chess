@@ -165,7 +165,7 @@ export function createReview({ rerender, onClose }) {
     } else {
       // Say so plainly: the built-in engine only looks a few moves ahead, so verdicts are rougher.
       const why = engineProblem();
-      note.textContent = `⚠ Analysed with the built-in engine, which is much weaker than Stockfish, so some verdicts may be wrong. Stockfish couldn't start${why ? ` (${why})` : ""}. Check that the folder vendor/stockfish/ on your site has both stockfish-nnue-16-single.js and stockfish-nnue-16-single.wasm.`;
+      note.textContent = `⚠ Analysed with the built-in engine, which is much weaker than Stockfish, so some verdicts may be wrong. Stockfish couldn't start${why ? ` (${why})` : ""}. Check that the folder vendor/stockfish/ sits directly beside index.html on your site (not only inside eval-bar-demo/) and holds both stockfish-nnue-16-single.js and stockfish-nnue-16-single.wasm.`;
     }
   }
 

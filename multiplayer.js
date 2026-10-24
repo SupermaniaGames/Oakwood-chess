@@ -4,19 +4,27 @@
 // any read-only spectators watching the same game).
 
 // STUN alone can't get through every network (corporate wifi, some mobile
-// carriers). Open Relay's free public TURN servers act as a relay when a
-// direct connection isn't possible — it's rate-limited but enough for a
-// casual game between two people.
+// carriers, which often share one address between many phones). A TURN relay
+// carries the game when a direct connection is impossible. Passing our own
+// `config` to PeerJS REPLACES its built-in server list, so PeerJS's own free
+// relays are listed here too, next to Open Relay's — the more relays, the
+// better the odds that one is up. All of these are free public services and
+// can be rate-limited or withdrawn; for a connection you can count on, put
+// your own TURN credentials (for example a free Metered or Cloudflare account)
+// in CUSTOM_ICE_SERVERS, like:
+//   { urls: "turn:YOUR-HOST:3478", username: "YOUR-NAME", credential: "YOUR-KEY" }
+const CUSTOM_ICE_SERVERS = [];
+
 const ICE_CONFIG = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:global.stun.twilio.com:3478" },
+    { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478"], username: "peerjs", credential: "peerjsp" },
     { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
     { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-    {
-      urls: "turn:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
+    { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+    { urls: "turns:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
+    ...CUSTOM_ICE_SERVERS,
   ],
 };
 
@@ -24,9 +32,10 @@ const ICE_CONFIG = {
 const SPECTATOR_EMOJIS = ["👏", "🔥", "👑", "😱"];
 
 export class Room {
-  constructor({ onOpen, onConnected, onData, onPeerLeft, onError, onSpectatorCountChange, onSpectatorJoin }) {
+  constructor({ onOpen, onConnected, onConnectFailed, onData, onPeerLeft, onError, onSpectatorCountChange, onSpectatorJoin }) {
     this.onOpen = onOpen;
     this.onConnected = onConnected;
+    this.onConnectFailed = onConnectFailed; // a connection closed before it ever opened
     this.onData = onData;
     this.onPeerLeft = onPeerLeft;
     this.onError = onError;
@@ -61,6 +70,9 @@ export class Room {
     if (this.peer) this.peer.destroy();
     this.peer = new Peer({ config: ICE_CONFIG });
     this.peer.on("open", () => {
+      // "open" fires again each time the broker connection is re-made. Keep the
+      // connection we already have, or the game would split across two of them.
+      if (this.conn && !this.conn._dead) return;
       const conn = this.peer.connect(hostId, { reliable: true });
       this._bindOpponent(conn);
     });
@@ -78,6 +90,7 @@ export class Room {
     if (this.peer) this.peer.destroy();
     this.peer = new Peer({ config: ICE_CONFIG });
     this.peer.on("open", () => {
+      if (this.conn && !this.conn._dead) return; // see join()
       const conn = this.peer.connect(hostId, { reliable: true, metadata: { role: "spectator" } });
       this._bindOpponent(conn);
     });
@@ -90,8 +103,19 @@ export class Room {
   // connection to PeerJS's broker — the "network problem" people hit when
   // they step out mid-invite. It reconnects on its own once possible.
   _watchDisconnect() {
-    this.peer.on("disconnected", () => {
-      if (!this.peer.destroyed) this.peer.reconnect();
+    const peer = this.peer;
+    peer.on("disconnected", () => {
+      // A short pause, so an unreachable broker isn't hammered in a tight loop.
+      clearTimeout(this._reconnectTimer);
+      this._reconnectTimer = setTimeout(() => {
+        if (!peer.destroyed && peer.disconnected) {
+          try {
+            peer.reconnect();
+          } catch {
+            /* state changed in the meantime */
+          }
+        }
+      }, 1000);
     });
   }
 
@@ -99,7 +123,11 @@ export class Room {
   // the automatic reconnect above didn't already catch it.
   reconnectIfNeeded() {
     if (this.peer && this.peer.disconnected && !this.peer.destroyed) {
-      this.peer.reconnect();
+      try {
+        this.peer.reconnect();
+      } catch {
+        /* already reconnecting */
+      }
     }
   }
 
@@ -107,9 +135,20 @@ export class Room {
   // (the first non-spectator connection) or the spectator list.
   _acceptIncoming(conn) {
     const isSpectatorConn = conn.metadata && conn.metadata.role === "spectator";
-    if (!isSpectatorConn && !this.conn) {
-      this._bindOpponent(conn);
-      return;
+    if (!isSpectatorConn) {
+      // The seat is free — or held by an attempt that never connected (a failed
+      // or abandoned try by the same friend). A newer attempt takes it over, so
+      // retrying works instead of "this room already has two players".
+      const seat = this.conn;
+      if (!seat || (!seat._wasOpen && !seat.open)) {
+        this.conn = null;
+        if (seat) {
+          seat._dead = true;
+          seat.close();
+        }
+        this._bindOpponent(conn);
+        return;
+      }
     }
     // Either explicitly a spectator, or a second non-spectator arriving
     // after the seat is taken. Both are treated as spectators — but only if
@@ -159,15 +198,34 @@ export class Room {
 
   _bindOpponent(conn) {
     this.conn = conn;
-    conn.on("open", () => this.onConnected && this.onConnected());
+    conn.on("open", () => {
+      conn._wasOpen = true;
+      if (this.conn === conn && this.onConnected) this.onConnected();
+    });
     conn.on("data", (data) => {
+      if (this.conn !== conn) return; // a connection we've replaced
       // Relay the opponent's moves/chat out to spectators too — without
       // this, spectators would only ever see the host's own moves.
       this._mirrorToSpectators(data, "guest");
       this.onData && this.onData(data);
     });
-    conn.on("close", () => this.onPeerLeft && this.onPeerLeft());
-    conn.on("error", (err) => this.onError && this.onError(err));
+    conn.on("close", () => {
+      conn._dead = true;
+      if (this.conn !== conn) return;
+      if (!conn._wasOpen) {
+        // It never got as far as opening: not a friend leaving. The host just
+        // keeps waiting with the seat free; a guest is told it didn't connect.
+        if (this.isHost) this.conn = null;
+        else this.onConnectFailed && this.onConnectFailed();
+        return;
+      }
+      this.onPeerLeft && this.onPeerLeft();
+    });
+    conn.on("error", (err) => {
+      if (this.conn !== conn) return;
+      if (this.isHost && !conn._wasOpen) return; // someone else's failed attempt isn't the host's problem
+      this.onError && this.onError(err);
+    });
   }
 
   // Sends to the opponent and — if this is the host — mirrors the same
@@ -187,6 +245,7 @@ export class Room {
   }
 
   close() {
+    clearTimeout(this._reconnectTimer);
     if (this.conn) this.conn.close();
     for (const conn of this.spectatorConns) conn.close();
     this.spectatorConns = [];

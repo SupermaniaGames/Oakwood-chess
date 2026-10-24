@@ -100,10 +100,21 @@ export function createCoachGame(deps) {
       el.appendChild(s);
     }
     el.classList.toggle("hidden", !title && lines.length === 0);
+    // The speech area has a fixed height: a new comment about your move starts at its top.
+    if (el.id === "coach-b1" && el.parentElement) el.parentElement.scrollTop = 0;
   }
   const bubble1 = (title, lines = []) => fill($("coach-b1"), title, lines); // about your move
-  const bubble2 = (lines = []) => fill($("coach-b2"), null, lines); // the coach's own move
-  const showActions = (on) => $("coach-actions").classList.toggle("hidden", !on);
+  const bubble2 = (lines = []) => {
+    fill($("coach-b2"), null, lines); // the coach's own move
+    // The coach's reply is the newest line: scroll down to it if the area is full.
+    const box = $("coach-b2").parentElement;
+    if (lines.length && box) box.scrollTop = box.scrollHeight;
+  };
+  const showActions = (on) => {
+    $("coach-actions").classList.toggle("hidden", !on);
+    // With Continue / Retry showing, bring the coach's "Take a look…" line into view above them.
+    if (on) $("coach-actions").parentElement.scrollTop = $("coach-actions").parentElement.scrollHeight;
+  };
 
   function clearHint() {
     deps.setArrows([]);

@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v10";
+const CACHE_NAME = "oakwood-chess-v11";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -49,7 +49,7 @@ self.addEventListener("install", (event) => {
         Promise.all(
           APP_SHELL.map((url) =>
             fetch(url, { cache: "reload" })
-              .then((res) => cache.put(url, res))
+              .then((res) => (res.ok ? cache.put(url, res) : undefined)) // never keep a 404 as the offline copy
               .catch(() => {})
           )
         )

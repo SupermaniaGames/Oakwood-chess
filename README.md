@@ -89,6 +89,28 @@ anywhere with HTTPS — installability needs a secure origin):
   most likely wasn't open yet or the host closed the tab; ask them to
   re-share the current code.
 
+### When a friend can't connect
+
+- **Try again.** If the connection fails, or nothing happens for 20 seconds, the
+  joining screen says why in plain words and shows **Try again**. If the host loses
+  the matchmaking server, they get **Try again** too (it opens a fresh room with the
+  same settings).
+- **A failed attempt no longer blocks the next one.** Before, a try that never
+  finished kept the host's seat, so the retry was refused with "This room already
+  has two players". A newer attempt now takes over a seat that never connected.
+  A friend who is *already connected* still holds the seat.
+- **A brief loss of the matchmaking connection no longer splits the game.** The
+  joining browser used to open a second connection when it reconnected, and its
+  moves went down the one the host ignores. It now keeps the one it has.
+- **Updates wait for you.** A new version of the app no longer reloads the page while
+  you are in a room or a game (or on a first visit through a room link); it applies
+  once you are back on Home.
+- **Relays.** Phones on mobile networks often cannot reach each other directly and
+  need a TURN relay. The app lists PeerJS's own free relays and Open Relay's, but
+  these are free public services that can be limited or withdrawn. For something you
+  can count on, put your own TURN credentials (for example a free Metered or
+  Cloudflare account) in `CUSTOM_ICE_SERVERS` at the top of `multiplayer.js`.
+
 ## Online (play someone you haven't met)
 
 Needs Firebase (the Online tab shows 🔒 until it's configured). Press
@@ -251,9 +273,13 @@ also accepts UCI or PGN move text.
   lowers the pitch when it doesn't. You can choose any installed English voice
   (or turn speech off) on the Play Coach setup screen and in the review options.
 - **Engine.** Moves are scored by **Stockfish 16** (WebAssembly, single-threaded,
-  in a Web Worker — `stockfish.js` drives it over UCI). Copy the folder
-  `vendor/stockfish/` (the `.js` and `.wasm` from the eval-bar demo) into the
-  site. If those files are missing or the browser can't run them, review falls
+  in a Web Worker — `stockfish.js` drives it over UCI). The two files
+  `stockfish-nnue-16-single.js` and `.wasm` live in the **top-level**
+  `vendor/stockfish/` folder, directly beside `index.html` (not only inside
+  `eval-bar-demo/`). If that folder is missing, the copy in
+  `eval-bar-demo/vendor/stockfish/` is used instead; if neither exists the app
+  falls back to the built-in engine and the review says exactly which two paths
+  it looked in. If those files are missing or the browser can't run them, review falls
   back automatically to the app's own small engine (`bot.js`) — it still works,
   but with a few moves of lookahead instead of Stockfish's; the summary says
   which engine did the work — and when it fell back, the summary says so in a
@@ -300,6 +326,11 @@ Stockfish while the coach talks to you:
   coach tells you its name and where it comes from ("You're playing the Sicilian
   Defense — named after the Italian island of Sicily…"). Each story is told once.
   Origins live in `openings.js`; only names with a reliable history are included.
+- **The board never moves.** On a phone the coach's speech area has a fixed
+  height (164 px; 120 px on short screens), so short or long dialogue can't push
+  the board up or down. Longer comments scroll inside it: a new comment on your
+  move starts at the top, the coach's reply scrolls into view, and Continue /
+  Retry stay pinned at the bottom.
 - **Toolbar:** Undo (takes back your move and his reply), Hint (draws the engine's
   best move and explains it), Resign. There is no evaluation bar during a game.
 - **When it ends** a result card shows who won and how, the coach's comment, how
@@ -594,7 +625,7 @@ coach-avatar.js   The coach's face: expressions per move, talking animation
 learn.js          The Learn tab renderer (small boards, steppers)
 coach-game.js     Play Coach: levels, live judging, hint/undo/retry, result card
 learn-data.js     Learn content: tactics, mates, strategy, endgames, glossary, famous games
-vendor/stockfish/ stockfish-nnue-16-single.js + .wasm (not in this repo's code — copy from the demo)
+vendor/stockfish/ stockfish-nnue-16-single.js + .wasm (Stockfish 16, single-threaded; top level, beside index.html)
 analysis.js       Game Review engine: move labels, accuracy, kid-friendly reasons, coach text
 analysis-worker.js  Runs the analysis off the main thread
 openings.js       Opening names and "still in book" check (SAN / UCI / PGN)
@@ -647,4 +678,4 @@ all the sizes for you directly.
 - If your friend closes the tab, the game ends — there's no reconnect or
   saved-game state (by design, to keep this a small, serverless project).
 - Game Review and spectator commentary use Stockfish when its files are in
-  `vendor/stockfish/`, otherwise the built-in engine (see *Game Review*).
+  `vendor/stockfish/` (or the demo's copy), otherwise the built-in engine (see *Game Review*).

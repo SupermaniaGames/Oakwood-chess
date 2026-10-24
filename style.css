@@ -1114,10 +1114,22 @@ body[data-coach="on"] #btn-rematch { display: none !important; }
   body[data-coach="on"] { --board-size: min(calc(100vw - 16px), calc(100dvh - 410px), 640px); }
   body[data-coach="on"] .titlebar { display: none; }
   body[data-coach="on"][data-screen="game"] #coach-panel { order: -4; width: calc(var(--board-size) + 0px); max-width: none; }
+
+  /* The coach's speech area has a FIXED height, so short or long dialogue never
+     pushes the board up or down. Longer text scrolls inside it; Continue / Retry
+     stay pinned to its bottom edge. */
+  body[data-coach="on"] { --coach-h: 164px; }
+  body[data-coach="on"][data-screen="game"] #coach-panel { height: var(--coach-h); flex: 0 0 auto; }
+  body[data-coach="on"] .coach-live { height: 100%; }
+  body[data-coach="on"] .coach-bubbles { height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+  /* keeps the bubbles at the bottom (beside the face) while they fit, yet still scrollable when they don't */
+  body[data-coach="on"] .coach-bubbles::before { content: ""; flex: 0 0 0; margin-top: auto; margin-bottom: -6px; }
+  body[data-coach="on"] .coach-bubbles .coach-bubble.light { flex: 0 0 auto; max-height: none; overflow: visible; }
+  body[data-coach="on"] .coach-actions { position: sticky; bottom: 0; flex: 0 0 auto; padding-top: 4px; background: var(--ink); }
 }
 @media (max-width: 899px) and (max-height: 700px) {
-  body[data-coach="on"] { --board-size: min(calc(100vw - 16px), calc(100dvh - 350px), 640px); }
-  body[data-coach="on"] .coach-bubbles .coach-bubble.light { font-size: 0.82rem; max-height: 84px; padding: 6px 10px; }
+  body[data-coach="on"] { --board-size: min(calc(100vw - 16px), calc(100dvh - 364px), 640px); --coach-h: 120px; }
+  body[data-coach="on"] .coach-bubbles .coach-bubble.light { font-size: 0.82rem; padding: 6px 10px; }
   body[data-coach="on"] .captured-tray { display: none; }
 }
 

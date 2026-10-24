@@ -59,6 +59,10 @@ function describeConnError(err) {
   if (type === "peer-unavailable")
     return "That code doesn't match an open room. Double-check it with your friend, or ask them to create a new one.";
   if (type === "network") return "Network problem — check your connection and try again.";
+  if (type === "negotiation-failed" || type === "connection-closed" || type === "webrtc")
+    return "Couldn't set up a direct connection with your friend. This often happens when you're on different mobile networks, or on a school/office network. Tap Try again, or try the same Wi-Fi.";
+  if (type === "socket-error" || type === "socket-closed" || type === "server-error")
+    return "Can't reach the matchmaking server right now. Check your connection and tap Try again.";
   if (type === "disconnected") return "Lost connection to the matchmaking server. Try again in a moment.";
   if (type === "browser-incompatible")
     return "This browser doesn't support the connection needed for online play.";
@@ -121,6 +125,7 @@ let coachMode = false; // Play Coach: a bot game with live coaching (mode is sti
 let coachThinking = false;
 let gameArrows = []; // arrows on the live board (hints, the coach's warning)
 let spectateTimer = 0; // 'still can\'t connect' hint for a spectator
+let guestTimer = 0; // 'still can\'t connect' hint for a friend joining a room
 let boardHook = null; // set while the Review / Puzzle screens draw the board (see renderBoard)
 let reviewReturn = "game"; // screen to go back to when Game Review is closed
 let specAnalysis = null; // spectator's private analysis board: { game, last } or null
@@ -1491,6 +1496,14 @@ function saveLocalProgress() {
   });
 }
 
+// Drops the current room without any of its callbacks firing (used by "Try again").
+function discardRoom() {
+  if (!room) return;
+  room.onConnected = room.onConnectFailed = room.onData = room.onPeerLeft = room.onError = null;
+  room.close();
+  room = null;
+}
+
 function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
   mode = "online";
   myColor = "w";
@@ -1517,6 +1530,8 @@ function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
   el("room-link-row").classList.remove("hidden");
   el("conn-state").textContent = "Waiting for your friend to join…";
   el("conn-state").classList.remove("error");
+  el("btn-room-retry").classList.add("hidden");
+  clearTimeout(guestTimer);
 
   let attempts = 0;
   room = new Room({
@@ -1584,6 +1599,13 @@ function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
       }
       el("conn-state").textContent = describeConnError(err);
       el("conn-state").classList.add("error");
+      // The room isn't reachable any more: offer a fresh one with the same settings.
+      const retry = el("btn-room-retry");
+      retry.classList.remove("hidden");
+      retry.onclick = () => {
+        discardRoom();
+        startOnlineAsHost(customFen, { listInLobby });
+      };
     },
   });
   room.allowSpectators = el("allow-spectators-toggle").checked;
@@ -1607,10 +1629,37 @@ function startOnlineAsGuest(rawCode) {
   el("conn-state").textContent = "Connecting to your friend…";
   el("conn-state").classList.remove("error");
 
+  // Say so when it isn't working instead of waiting for ever, and let them try again.
+  let guestConnected = false;
+  const retryBtn = el("btn-room-retry");
+  retryBtn.classList.add("hidden");
+  retryBtn.onclick = () => {
+    discardRoom();
+    startOnlineAsGuest(code);
+  };
+  const guestFailed = (message) => {
+    if (guestConnected || mode !== "online" || viewState !== "room") return;
+    clearTimeout(guestTimer);
+    el("conn-state").textContent = message;
+    el("conn-state").classList.add("error");
+    retryBtn.classList.remove("hidden");
+  };
+  clearTimeout(guestTimer);
+  guestTimer = setTimeout(
+    () =>
+      guestFailed(
+        "Still can't connect. Check that your friend still has the room open, then tap Try again. If you're on different networks (mobile data vs Wi-Fi), the connection may be blocked — try the same Wi-Fi."
+      ),
+    20000
+  );
+
   room = new Room({
     onConnected: () => {
+      guestConnected = true;
+      clearTimeout(guestTimer);
       el("conn-state").textContent = "Connected — waiting for game info…";
     },
+    onConnectFailed: () => guestFailed(describeConnError({ type: "negotiation-failed" })),
     onData: (data) => {
       if (data.type === "spectate-denied") {
         el("conn-state").textContent = "This room already has two players.";
@@ -1642,8 +1691,12 @@ function startOnlineAsGuest(rawCode) {
       if (clock) clock.stop();
     },
     onError: (err) => {
-      el("conn-state").textContent = describeConnError(err);
-      el("conn-state").classList.add("error");
+      if (guestConnected && viewState !== "room") return; // mid-game: the "friend left" message covers it
+      guestFailed(describeConnError(err));
+      if (guestConnected) {
+        el("conn-state").textContent = describeConnError(err);
+        el("conn-state").classList.add("error");
+      }
     },
   });
   room.join(PEER_PREFIX + code);
@@ -2872,6 +2925,7 @@ function leaveToHome() {
   showScreen("home");
   renderResumeBanner();
   renderHistoryList();
+  if (window.__applyPendingUpdate) window.__applyPendingUpdate();
 }
 
 function goHome() {
@@ -2981,11 +3035,21 @@ if ("serviceWorker" in navigator) {
 
   // Once a new service worker activates, reload once so this tab is
   // actually running the new files instead of stale ones still in memory.
+  // Not on the very first visit (nothing stale to replace — and the reload used to
+  // cut off a friend who had just opened a room link), and not in the middle of a
+  // room or a game: then it waits until you're back on Home.
+  const hadController = !!navigator.serviceWorker.controller;
   let reloadedForUpdate = false;
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (reloadedForUpdate) return;
+  window.__applyPendingUpdate = () => {
+    if (!updatePending || reloadedForUpdate || viewState === "room" || viewState === "game") return;
     reloadedForUpdate = true;
     window.location.reload();
+  };
+  let updatePending = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController || reloadedForUpdate) return;
+    updatePending = true;
+    window.__applyPendingUpdate();
   });
 }
 

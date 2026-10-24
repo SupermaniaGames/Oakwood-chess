@@ -6,11 +6,16 @@
 //     evaluate() stops the one before it, so the bar always catches up to the
 //     latest position instead of working through a backlog.
 //
-// Files (copy from the eval-bar demo): vendor/stockfish/stockfish-nnue-16-single.js
-// and its .wasm next to it. Single-threaded on purpose: the multi-threaded
+// Files: vendor/stockfish/stockfish-nnue-16-single.js and its .wasm next to it,
+// in the TOP-LEVEL vendor/ folder (beside index.html) — not only inside
+// eval-bar-demo/. If they are only in the demo's own vendor folder, that copy is
+// used as a second choice. Single-threaded on purpose: the multi-threaded
 // builds need cross-origin-isolation headers GitHub Pages can't send.
 
-const DEFAULT_URL = "./vendor/stockfish/stockfish-nnue-16-single.js";
+const DEFAULT_URLS = [
+  "./vendor/stockfish/stockfish-nnue-16-single.js",
+  "./eval-bar-demo/vendor/stockfish/stockfish-nnue-16-single.js",
+];
 
 // UCI scores are from the side to move's point of view.
 function parseInfo(line) {
@@ -23,7 +28,8 @@ function parseInfo(line) {
   return { depth, multipv, score: { type: sc[1], value: Number(sc[2]) }, pv };
 }
 
-export function createStockfish(url = DEFAULT_URL) {
+export function createStockfish(url = DEFAULT_URLS) {
+  const urls = Array.isArray(url) ? url : [url];
   let worker = null;
   let failed = false;
   let multipvSet = 1;
@@ -36,30 +42,55 @@ export function createStockfish(url = DEFAULT_URL) {
       failed = true;
       reject(new Error(why));
     };
-    try {
-      worker = new Worker(url);
-    } catch (e) {
-      return fail("Worker blocked: " + e.message);
-    }
-    const timer = setTimeout(() => fail("Stockfish took too long to start"), 20000);
-    worker.onerror = (e) => {
-      clearTimeout(timer);
-      fail("Stockfish failed to load" + (e && e.message ? ": " + e.message : ""));
-      // anything already waiting should fail over, not hang
-      if (job) job.reject(new Error("engine failed"));
-      queue.splice(0).forEach((j) => j.reject(new Error("engine failed")));
-    };
-    const onMsg = (e) => {
-      const line = String(e.data);
-      if (line === "uciok") worker.postMessage("isready");
-      else if (line === "readyok") {
+    let tried = 0;
+    let timer = null;
+    let started = false; // true once the engine has answered "readyok"
+    // Start the engine from urls[tried]. A 404 shows up as a worker "error"
+    // event, so on error the next location is tried before giving up.
+    const start = () => {
+      const w = new Worker(urls[tried]);
+      worker = w;
+      timer = setTimeout(() => fail("Stockfish took too long to start"), 20000);
+      w.onerror = (e) => {
         clearTimeout(timer);
-        worker.removeEventListener("message", onMsg);
-        resolve();
-      }
+        if (worker !== w) return;
+        if (!started) w.terminate();
+        if (!started && tried + 1 < urls.length) {
+          tried += 1;
+          try {
+            start();
+          } catch (err) {
+            fail("Worker blocked: " + err.message);
+          }
+          return;
+        }
+        fail(
+          started
+            ? "Stockfish stopped unexpectedly" + (e && e.message ? ": " + e.message : "")
+            : "Stockfish failed to load: no engine file found at " + urls.map((u) => u.replace("./", "")).join(" or ") + (e && e.message ? " (" + e.message + ")" : "")
+        );
+        // anything already waiting should fail over, not hang
+        if (job) job.reject(new Error("engine failed"));
+        queue.splice(0).forEach((j) => j.reject(new Error("engine failed")));
+      };
+      const onMsg = (e) => {
+        const line = String(e.data);
+        if (line === "uciok") w.postMessage("isready");
+        else if (line === "readyok") {
+          clearTimeout(timer);
+          started = true;
+          w.removeEventListener("message", onMsg);
+          resolve();
+        }
+      };
+      w.addEventListener("message", onMsg);
+      w.postMessage("uci");
     };
-    worker.addEventListener("message", onMsg);
-    worker.postMessage("uci");
+    try {
+      start();
+    } catch (e) {
+      fail("Worker blocked: " + e.message);
+    }
   });
   ready.catch(() => {});
 
