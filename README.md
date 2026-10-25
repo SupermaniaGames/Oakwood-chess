@@ -6,9 +6,9 @@ files.
 
 ## Getting around
 
-- **Mobile:** a bottom bar — Home, Learn, Watch, Account. During a game it
+- **Mobile:** a bottom bar — Home, Learn, Puzzles, Watch, Account. During a game it
   switches to the game toolbar (Flip · Undo · Resign · New game · Home).
-- **Desktop:** a left sidebar with the same four sections.
+- **Desktop:** a left sidebar with the same five sections.
 - **Home** is one big **Play** button plus a mode switcher —
   **Online · vs Computer · Local / Friend**. The button always says what it
   will start ("vs Computer · 1000 · White", "Local · 3 | 2"). History and
@@ -269,9 +269,14 @@ also accepts UCI or PGN move text.
   Missing pictures are handled: no shocked picture → the neutral one shakes with
   a red glow; no thinking picture → neutral; no neutral picture → the drawn face.
 - **The voice** uses the phone's built-in speech. Phones often default to a
-  woman's voice, so the coach picks a man's voice when the phone has one, and
-  lowers the pitch when it doesn't. You can choose any installed English voice
-  (or turn speech off) on the Play Coach setup screen and in the review options.
+  woman's voice, so the coach picks a man's voice when the phone lists one by
+  name (Windows, Mac, iPhone and some Android voices do), and lowers the pitch
+  when it doesn't. You can choose any installed English voice (or turn speech
+  off) on the Play Coach setup screen and in the review options.
+  **Android Chrome only lists one entry per language** ("English India"), not
+  individual voices, so the app can't tell which is a man's. There the picker
+  says "Auto (phone's voice)" and a note explains how to change the voice in
+  the phone's own Settings → Text-to-speech.
 - **Engine.** Moves are scored by **Stockfish 16** (WebAssembly, single-threaded,
   in a Web Worker — `stockfish.js` drives it over UCI). The two files
   `stockfish-nnue-16-single.js` and `.wasm` live in the **top-level**
@@ -364,9 +369,11 @@ smothered, queen-and-king, ladder, Scholar's and Fool's mate), **Openings**
 (about 70 named openings: tap one to step through the moves, see the idea in
 kid and adult wording, and who plays it), **Strategy** (opening principles,
 piece values, check-capture-threat, king safety, pawn structure, learning from
-Kasparov and Carlsen), **Endgames**, **Famous games** (Opera Game, Immortal
-Game, Kasparov–Topalov 1999, Kasparov–Deep Blue game 6 — step through with
-notes, or open the coach's Game Review) and a **Glossary**. All content lives in
+Kasparov and Carlsen), **Endgames**, **Famous games** (ten: Opera Game, Immortal
+Game, Kasparov–Topalov 1999, Kasparov–Deep Blue game 6, Byrne–Fischer 1956,
+Karpov–Kasparov 1985, Aronian–Anand 2013, Ivanchuk–Yusupov 1991, Short–Timman
+1991, Rotlevi–Rubinstein 1907 — step through with notes, or open the coach's
+Game Review) and a **Glossary**. All content lives in
 `learn-data.js` and `openings.js`; every example position and game is checked
 by the test suite.
 
@@ -389,9 +396,13 @@ spectator analysis board, Retry and the puzzles.
 - Sound effects for moves, captures, check, and game end — synthesized
   in-browser (no audio files to load), so nothing to fetch or license.
   There's a 🔊/🔇 toggle among the in-game buttons.
-- The home screen shows the app icon (`icons/icon-512.png`) instead of a
-  text title — once you drop in your own logo (see "Using your own logo /
-  icon" below), it'll show there automatically.
+- **Look.** A light theme: cream page (`#F5F3E9`), white cards, green accents
+  (`#477747`, highlight `#8FBE62`), dark-green text (`#243326`), and the board in
+  `#F0EED2` / `#769656`. The colours are CSS variables at the top of `style.css`.
+  The Home screen opens with a hero (the Oakwood logo, tagline and the Play
+  button, with a faint king-and-knight drawing behind), and soft oak-leaf
+  corners sit behind Home, Learn, Watch and Account. Their art is in `assets/`;
+  the drawing's strength is `.chess-decoration { opacity }` in `style.css`.
 
 
 ## If you left the app to share the code and it broke
@@ -639,6 +650,7 @@ leaderboard.js    Optional shared leaderboard (Firebase Firestore)
 firebase-config.js  Your Firebase project config (edit this — see above)
 manifest.json     PWA manifest (name, icons, colors)
 sw.js             Service worker — offline app-shell caching
+assets/           Home hero art: logo, king-and-knight drawing, oak-leaf corners
 icons/            App icons + favicon (placeholder — see below)
 vendor/chess.js   Move generation & rules (chess.js, vendored, MIT/BSD)
 vendor/peerjs.min.js   WebRTC peer connections (PeerJS, vendored, MIT)

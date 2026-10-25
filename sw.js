@@ -1,4 +1,4 @@
-const CACHE_NAME = "oakwood-chess-v11";
+const CACHE_NAME = "oakwood-chess-v12";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -33,6 +33,10 @@ const APP_SHELL = [
   "./manifest.json",
   "./vendor/chess.js",
   "./vendor/peerjs.min.js",
+  "./assets/chess-decoration.png",
+  "./assets/leaves-left.png",
+  "./assets/leaves-right.png",
+  "./assets/oakwood-logo.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/apple-touch-icon.png",

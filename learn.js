@@ -273,7 +273,7 @@ function renderList(root, intro, items) {
 }
 
 function renderGames(root, onReviewGame) {
-  root.appendChild(el("p", "muted learn-intro", "Four classic games. Step through them, then open the Game Review to hear the coach explain every move."));
+  root.appendChild(el("p", "muted learn-intro", `${GAMES.length} classic games. Step through them, then open the Game Review to hear the coach explain every move.`));
   for (const gm of GAMES) {
     const card = el("div", "card learn-card");
     card.appendChild(el("h3", null, gm.title));

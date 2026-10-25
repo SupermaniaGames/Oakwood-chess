@@ -41,7 +41,7 @@ import { createCoachGame, COACH_LEVELS, DEFAULT_COACH_ELO } from "./coach-game.j
 import { createLiveAnalyzer, stopAnalysis, CLASS_INFO } from "./analysis.js";
 import { liveSentence } from "./coach.js";
 import { getAnalysisSettings } from "./storage.js";
-import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, listVoices, getVoiceName, setVoiceName } from "./voice.js";
+import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, listVoices, getVoiceName, setVoiceName, canPickMaleVoice, voiceHelp } from "./voice.js";
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
 const PEER_PREFIX = "oakwood-chess-";
@@ -320,7 +320,7 @@ function renderCoachVoice() {
   on.onchange = () => setVoiceEnabled(on.checked);
   const sel = el("coach-voice");
   sel.innerHTML = "";
-  for (const [val, label] of [["", "Auto (male)"], ...listVoices().map((v) => [v.name, v.name])]) {
+  for (const [val, label] of [["", canPickMaleVoice() ? "Auto (male)" : "Auto (phone's voice)"], ...listVoices().map((v) => [v.name, v.name])]) {
     const o = document.createElement("option");
     o.value = val;
     o.textContent = label;
@@ -331,6 +331,17 @@ function renderCoachVoice() {
     setVoiceName(sel.value);
     speak("Hello, I'm your chess coach.");
   };
+  // On phones that don't name their voices (Android), say how to change the voice.
+  let help = el("coach-voice-help");
+  if (!help) {
+    help = document.createElement("p");
+    help.id = "coach-voice-help";
+    help.className = "muted";
+    help.style.cssText = "margin:6px 0 0;font-size:.78rem;";
+    row.insertAdjacentElement("afterend", help);
+  }
+  help.textContent = voiceHelp();
+  help.classList.toggle("hidden", !help.textContent);
 }
 // Browsers load their voice list a moment after the page does.
 if (voiceSupported() && "onvoiceschanged" in window.speechSynthesis) {

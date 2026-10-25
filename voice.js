@@ -58,6 +58,20 @@ export function setVoiceName(name) {
   }
 }
 
+// True when this phone's voice list lets us find a man's voice by name. On Android,
+// Chrome lists one entry per language/region ("English India"), not per voice, so the
+// answer is no there — the phone's own default voice (often a woman's) is what speaks,
+// and it can only be changed in the phone's text-to-speech settings.
+export function canPickMaleVoice() {
+  return english().some((v) => MALE.test(v.name) && !FEMALE.test(v.name));
+}
+
+// The note shown beside the voice picker when canPickMaleVoice() is false ("" if it's fine).
+export function voiceHelp() {
+  if (!voiceSupported() || english().length === 0 || canPickMaleVoice()) return "";
+  return "Your phone lists languages here, not individual voices, so the app can't choose a man's voice for you. To change the voice itself: open your phone's Settings, search for \"Text-to-speech\", open Google's speech engine settings and pick a different English voice.";
+}
+
 // The voice to use right now, and whether it had to be a guess.
 function chooseVoice() {
   const all = english();

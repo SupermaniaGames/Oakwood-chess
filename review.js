@@ -13,7 +13,7 @@ import { getAnalysisSettings, saveAnalysisSettings } from "./storage.js";
 import { coachLines, coachSpeech, summaryLines } from "./coach.js";
 import { initCoach, setMood, moodForClass } from "./coach-avatar.js";
 import { MATE_THRESHOLD } from "./bot.js";
-import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, listVoices, getVoiceName, setVoiceName } from "./voice.js";
+import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, listVoices, getVoiceName, setVoiceName, canPickMaleVoice, voiceHelp } from "./voice.js";
 
 const $ = (id) => document.getElementById(id);
 const NOTABLE = new Set(["brilliant", "great", "inaccuracy", "mistake", "miss", "blunder"]);
@@ -610,9 +610,10 @@ export function createReview({ rerender, onClose }) {
     if (voiceSupported()) {
       const vrow = document.createElement("div");
       vrow.className = "rv-set-row";
-      vrow.innerHTML = '<div class="rv-set-text"><b>Coach voice</b><small>Pick any voice installed on your phone. "Auto" chooses a man\'s voice.</small></div><select class="rv-select" aria-label="Coach voice"></select>';
+      vrow.innerHTML = '<div class="rv-set-text"><b>Coach voice</b><small></small></div><select class="rv-select" aria-label="Coach voice"></select>';
+      vrow.querySelector("small").textContent = voiceHelp() || 'Pick any voice installed on your phone. "Auto" chooses a man\'s voice.';
       const sel = vrow.querySelector("select");
-      const opts = [["", "Auto (male)"], ...listVoices().map((v) => [v.name, v.name])];
+      const opts = [["", canPickMaleVoice() ? "Auto (male)" : "Auto (phone's voice)"], ...listVoices().map((v) => [v.name, v.name])];
       for (const [val, label] of opts) {
         const o = document.createElement("option");
         o.value = val;
