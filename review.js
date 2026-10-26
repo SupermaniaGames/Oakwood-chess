@@ -99,6 +99,45 @@ export function createReview({ rerender, onClose }) {
     document.body.dataset.reviewPhase = p;
     $("review-summary").classList.toggle("hidden", p !== "summary");
     $("review-steps").classList.toggle("hidden", p !== "steps");
+    for (const t of $("rv-tabs").children) t.setAttribute("aria-selected", String(t.dataset.tab === p));
+  }
+
+  // The names above and below the board (desktop), with each player's accuracy.
+  function renderNameBars() {
+    const mk = (color) => {
+      const name = $(color === "w" ? "review-white-name" : "review-black-name").textContent;
+      const acc = data && data.accuracy[color] != null ? data.accuracy[color].toFixed(1) : "";
+      return `<span class="rv-sq ${color}"></span><b class="rv-nm"></b><span class="rv-acc">${acc}</span>`.replace('<b class="rv-nm"></b>', `<b class="rv-nm">${name.replace(/[<>&]/g, "")}</b>`);
+    };
+    const bottom = cssFlip ? "b" : "w";
+    $("rv-name-bottom").innerHTML = mk(bottom);
+    $("rv-name-top").innerHTML = mk(bottom === "w" ? "b" : "w");
+  }
+
+  // Evaluation / Lines / Feedback switches at the top of the panel (desktop).
+  function renderToggles() {
+    const box = $("rv-toggles");
+    box.innerHTML = "";
+    for (const [key, label] of [["evalBar", "Evaluation"], ["engineLines", "Lines"], ["moveFeedback", "Feedback"]]) {
+      const wrap = document.createElement("label");
+      wrap.className = "rv-tog";
+      const text = document.createElement("span");
+      text.textContent = label;
+      const sw = document.createElement("button");
+      sw.type = "button";
+      sw.className = "rv-switch rv-switch-sm";
+      sw.setAttribute("role", "switch");
+      sw.setAttribute("aria-label", label);
+      sw.setAttribute("aria-checked", String(!!settings[key]));
+      sw.onclick = () => {
+        settings = { ...settings, [key]: !settings[key] };
+        saveAnalysisSettings(settings);
+        sw.setAttribute("aria-checked", String(!!settings[key]));
+        if (data) refresh();
+      };
+      wrap.append(text, sw);
+      box.appendChild(wrap);
+    }
   }
 
   // ----- summary phase -----
@@ -437,6 +476,10 @@ export function createReview({ rerender, onClose }) {
       requestThreat();
       const cp = cur();
       $("btn-review-retry").disabled = !(cp && ERRORS.has(cp.cls));
+      renderToggles();
+      $("review-opening-steps").textContent = data.opening ? `Opening: ${data.opening}` : "";
+      $("btn-review-first").disabled = index <= 0;
+      $("btn-review-last").disabled = index >= data.plies.length;
       $("btn-review-prev").disabled = index <= 0;
       $("btn-review-next").disabled = index >= data.plies.length;
       $("btn-mv-rprev").disabled = index <= 0;
@@ -553,21 +596,21 @@ export function createReview({ rerender, onClose }) {
 
   // The header arrow: from the steps, back to the summary; from the summary,
   // out of the review.
+  function toSummary() {
+    stopSpeaking();
+    setPhase("summary");
+    index = 0;
+    if (retry) exitRetry(false);
+    updateEvalBar();
+    requestAnimationFrame(() => {
+      board = new Chess(fenAt(0));
+      drawGraph();
+      rerender();
+    });
+  }
   function backFromHeader() {
-    if (phase === "steps") {
-      stopSpeaking();
-      setPhase("summary");
-      index = 0;
-      if (retry) exitRetry(false);
-      updateEvalBar();
-      requestAnimationFrame(() => {
-        board = new Chess(fenAt(0));
-        drawGraph();
-        rerender();
-      });
-    } else {
-      close();
-    }
+    if (phase === "steps") toSummary();
+    else close();
   }
 
   function onKey(e) {
@@ -659,6 +702,15 @@ export function createReview({ rerender, onClose }) {
   function wire() {
     wired = true;
     $("btn-review-start").onclick = () => startSteps(1);
+    $("btn-review-first").onclick = () => goTo(0);
+    $("btn-review-last").onclick = () => goTo(data ? data.plies.length : 0, { say: true });
+    for (const t of $("rv-tabs").children) {
+      t.onclick = () => {
+        if (!data) return;
+        if (t.dataset.tab === "summary" && phase !== "summary") toSummary();
+        else if (t.dataset.tab === "steps" && phase !== "steps") startSteps(1);
+      };
+    }
     $("btn-review-prev").onclick = () => goTo(index - 1, { say: true });
     $("btn-review-next").onclick = () => goTo(index + 1, { say: true });
     $("btn-mv-rprev").onclick = () => goTo(index - 1, { say: true });
@@ -705,6 +757,7 @@ export function createReview({ rerender, onClose }) {
     board = new Chess(startFen || undefined);
     $("review-white-name").textContent = whiteName;
     $("review-black-name").textContent = blackName;
+    renderNameBars();
     $("review-body").classList.add("hidden");
     $("review-error").classList.add("hidden");
     $("review-progress").classList.remove("hidden");
@@ -742,6 +795,7 @@ export function createReview({ rerender, onClose }) {
     if (mine.cancelled) return;
     $("review-progress").classList.add("hidden");
     $("review-body").classList.remove("hidden");
+    renderNameBars();
     $("review-opening").textContent = data.opening ? `Opening: ${data.opening}` : "";
     renderSummary();
     // The canvas only has a size once it is visible.

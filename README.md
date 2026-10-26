@@ -122,24 +122,37 @@ simple lobby, not rating-based matchmaking — you get whoever's waiting.
 
 ## Watching games (spectators)
 
-Online games can be watched live, read-only — it's **opt-in per game**:
-the host ticks "Let others watch this game live" when creating the room.
+Online games can be watched live, read-only — and it's **private and opt-in**:
 
-- Once the opponent joins, the host gets a **Copy watch link** button
-  (`…/?watch=CODE`). Anyone with that link can watch — no Firebase needed.
-- If Firebase is configured, the game is also listed under the **Watch**
-  tab → *Live at Oakwood Chess*, so people can find it without a link.
-  Listings disappear when the game ends or the host leaves.
+- **Off unless the host ticks it.** The host ticks *Let others watch this game*
+  when creating the room. Nothing is open to watchers before the game starts.
+- **Its own code.** Watching uses a separate **6-character watch code**
+  (`…/?watch=CODE`), shown on the game page: in a chip at the top left (tap it to
+  copy the link) and in the host's spectator controls (on a phone, the **Watch**
+  button in the toolbar; on desktop, the card beside the board). The code players
+  use to *join* the room is never shared with watchers, so a watch link can't be
+  used to play; and a watch code can't move pieces or chat (it is a separate,
+  read-only connection). An old watch link made from a room code no longer works
+  and says so.
+- **Private by default.** Only people given the link or code can watch. To make a
+  game findable, the host also ticks *Also list it in the Watch tab* (only offered
+  when Firebase is configured). Listings use the watch code and disappear when the
+  game ends, the host leaves, or the host stops spectators.
+- **The host stays in control.** The host sees how many are watching, and can tap
+  **Stop spectators** at any time: everyone is disconnected and the code stops
+  working. **Allow spectators** later gives a brand-new code. The host can also
+  allow spectators in the middle of a game that started without them.
+- **Viewers** open the link, or go to **Watch → Watch with a code** and type the
+  code (spaces and lower case are fine).
 - Spectators see the current position (even if they join mid-game), moves,
-  the move list and chat; they can't move, chat, or affect the game. Games
-  without the tick refuse spectators, and a third person opening an invite
-  link to a full room is turned away rather than silently watching.
+  the move list and chat; they can't move, chat, or affect the game. A third
+  person opening an invite link to a full room is turned away.
 - Spectated games aren't saved to the spectator's history or rating.
 - You can also browse back through a game you're watching (‹ ›) without
   losing your place when new moves arrive.
 - If a spectator can't connect after about 15 seconds, the screen explains the
-  usual reasons (host didn't tick *Let others watch*, game over, networks that
-  can't reach each other) and offers *Try again*.
+  usual reasons (host doesn't allow spectators, game over, a wrong code, networks
+  that can't reach each other) and offers *Try again*.
 - **Analysis board:** tap *Analysis board* to try moves for **both** sides on
   your own copy of the current position. Nothing is sent to the players, and
   the live game carries on underneath (you're told how many moves you've
@@ -159,7 +172,7 @@ the host ticks "Let others watch this game live" when creating the room.
   games and the list can't be read. The app now says so: a host whose
   listing is refused sees a warning, and the Watch tab explains the missing
   rule instead of showing an empty list. (A game also only appears once
-  the opponent has joined, and only if the host ticked *Let others watch*.)
+  the opponent has joined, and only if the host ticked *Also list it in the Watch tab*.)
 - Moves still travel peer-to-peer through the host's browser, so a game
   with many watchers uses the host's upload bandwidth, and the game ends
   for everyone if the host closes their tab.

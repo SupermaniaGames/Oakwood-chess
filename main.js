@@ -45,6 +45,7 @@ import { speak, stopSpeaking, isVoiceEnabled, setVoiceEnabled, voiceSupported, l
 import { playSound, isSoundEnabled, setSoundEnabled } from "./sound.js";
 
 const PEER_PREFIX = "oakwood-chess-";
+const WATCH_PREFIX = "oakwood-watch-"; // spectators connect here, never to the players' room
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L — easy to read aloud
 const ELO_K = 32;
 
@@ -115,6 +116,9 @@ let spectateGuestName = "Guest";
 let customStartFen = null; // FEN both players started from (null = standard)
 let spectateHostIsWhite = true;
 let liveListed = false; // host only: is this game in the Watch directory?
+let liveListedCode = "";
+let currentWatchCode = ""; // host only: the code spectators use (not the room code)
+let hostWantsSpectators = false; // host only: spectating was ticked and hasn't been stopped
 let lobbyListed = false; // host only: is this room listed in the Online lobby?
 let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "local"
 let reviewPly = null; // null = the live position; a number = browsing earlier moves
@@ -1417,7 +1421,11 @@ function applyRematch() {
   el("btn-rematch").classList.toggle("hidden", mode === "online");
   el("request-banner").classList.add("hidden");
   render();
-  if (mode === "online" && room && room.isHost && room.allowSpectators) listLiveGame();
+  if (mode === "online" && room && room.isHost) {
+    if (hostWantsSpectators && !room.watchOpen) startWatchRoom();
+    else if (room.listPublicly && room.watchOpen) listLiveGame();
+    updateHostWatchUI();
+  }
 }
 
 // ---------- Local / online setup ----------
@@ -1584,6 +1592,8 @@ function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
     onSpectatorCountChange: (n) => {
       el("watchers-count").textContent = n;
       el("watchers-note").classList.toggle("hidden", n === 0);
+      el("watch-chip-count").textContent = `· ${n}`;
+      el("watch-chip-count").classList.toggle("hidden", n === 0);
     },
     // A spectator joining mid-game needs the current position, not just
     // future moves — so send them a snapshot the moment they connect.
@@ -1619,7 +1629,9 @@ function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
       };
     },
   });
-  room.allowSpectators = el("allow-spectators-toggle").checked;
+  hostWantsSpectators = el("allow-spectators-toggle").checked;
+  room.listPublicly = hostWantsSpectators && el("list-public-toggle").checked && isConfigured();
+  currentWatchCode = "";
   currentRoomCode = generateRoomCode();
   room.host(PEER_PREFIX + currentRoomCode);
 }
@@ -1722,12 +1734,16 @@ function spectateNames() {
 // --- Live-game directory (host side, only when they opted in) ---
 
 function listLiveGame() {
-  registerLiveGame(currentRoomCode, {
+  if (!currentWatchCode) return;
+  if (window.__oakwoodTest) (window.__oakwoodTest.listed = window.__oakwoodTest.listed || []).push(currentWatchCode); // test hook
+  const code = currentWatchCode;
+  registerLiveGame(code, {
     hostName: getProfile().name || "Host",
     guestName: opponentName,
     timeControl: timeControlKey,
   }).then((ok) => {
     liveListed = ok;
+    if (ok) liveListedCode = code;
     const warn = el("listing-warning");
     if (ok) {
       warn.classList.add("hidden");
@@ -1744,13 +1760,74 @@ function listLiveGame() {
 function delistLiveGame() {
   if (!liveListed) return;
   liveListed = false;
-  unregisterLiveGame(currentRoomCode);
+  unregisterLiveGame(liveListedCode || currentWatchCode);
+  liveListedCode = "";
+}
+
+// --- Spectator access (host side) ---
+// Watching has its own code, opened only while the host allows it.
+
+function startWatchRoom(attempt = 0) {
+  if (!room || !room.isHost) return;
+  currentWatchCode = generateRoomCode(6);
+  room.openWatchRoom(WATCH_PREFIX + currentWatchCode, {
+    onReady: () => {
+      updateHostWatchUI();
+      if (room.listPublicly && room.conn && room.conn.open) listLiveGame();
+    },
+    // A clash on the code is routine: mint another and try again.
+    onTaken: () => {
+      if (attempt < 6) startWatchRoom(attempt + 1);
+    },
+    onError: () => updateHostWatchUI(),
+  });
+  updateHostWatchUI();
+}
+
+function stopWatchRoom() {
+  hostWantsSpectators = false;
+  delistLiveGame();
+  if (room) room.closeWatchRoom();
+  currentWatchCode = "";
+  updateHostWatchUI();
+}
+
+function updateHostWatchUI() {
+  const host = mode === "online" && !!room && room.isHost;
+  el("host-watch-card").classList.toggle("hidden", !host);
+  el("btn-watch-manage").classList.toggle("hidden", !host);
+  if (!host) {
+    el("host-watch-card").classList.remove("open");
+    return;
+  }
+  const on = room.watchOpen && !!currentWatchCode;
+  const state = el("host-watch-state");
+  state.textContent = "";
+  if (on) {
+    state.append("Spectators allowed · watch code ");
+    const code = document.createElement("b");
+    code.className = "watch-code";
+    code.textContent = currentWatchCode;
+    state.append(code, room.listPublicly ? " · also listed in the Watch tab" : " · private");
+  } else {
+    state.textContent = "Spectators are off. Nobody can watch this game.";
+  }
+  el("btn-copy-watch-game").classList.toggle("hidden", !on);
+  el("btn-watch-manage").classList.toggle("on", on);
+  // The code is always visible on the game page (a chip in the header).
+  const chip = el("watch-chip");
+  chip.classList.toggle("on", on);
+  el("watch-chip-code").textContent = on ? currentWatchCode : "";
+  const stop = el("btn-stop-spectators");
+  stop.textContent = on ? "Stop spectators" : "Allow spectators";
+  stop.classList.toggle("btn-danger-soft", on);
+  if (!on) el("watchers-note").classList.add("hidden");
 }
 
 // --- Spectating someone else's game (read-only) ---
 
 function startSpectating(rawCode) {
-  const code = String(rawCode || "").trim().toUpperCase();
+  const code = String(rawCode || "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
   mode = "spectate";
   myColor = "w";
   flipped = false;
@@ -1778,7 +1855,7 @@ function startSpectating(rawCode) {
   spectateTimer = setTimeout(() => {
     if (spectateConnected || mode !== "spectate" || viewState !== "room") return;
     el("conn-state").textContent =
-      "Still can't connect. Check that the game is still going and that the host ticked “Let others watch”. If you're on different networks (mobile data vs Wi-Fi), the connection may be blocked — try the same Wi-Fi.";
+      "Still can't connect. Check that the game is still going and that the host allows spectators. If you're on different networks (mobile data vs Wi-Fi), the connection may be blocked — try the same Wi-Fi.";
     el("conn-state").classList.add("error");
     retryBtn.classList.remove("hidden");
   }, 15000);
@@ -1791,16 +1868,18 @@ function startSpectating(rawCode) {
     },
     onData: handleSpectatorData,
     onPeerLeft: () => {
-      statusEl.textContent = "The game has ended — the host left.";
+      statusEl.textContent = "The live feed has ended — the game is over, the host left, or the host stopped spectators.";
     },
     onError: (err) => {
       el("conn-state").textContent =
-        err?.type === "peer-unavailable" ? "That game isn't live any more." : describeConnError(err);
+        err?.type === "peer-unavailable"
+          ? "No game is open to watch with that code. Check the code with the host — spectators may have been stopped, or the game is over."
+          : describeConnError(err);
       el("conn-state").classList.add("error");
       retryBtn.classList.remove("hidden");
     },
   });
-  room.joinAsSpectator(PEER_PREFIX + code);
+  room.joinAsSpectator(WATCH_PREFIX + code);
 }
 
 function beginSpectating() {
@@ -1827,7 +1906,9 @@ function beginSpectating() {
 function handleSpectatorData(data) {
   switch (data.type) {
     case "spectate-denied":
-      el("conn-state").textContent = "This game isn't open to spectators.";
+      el("conn-state").textContent = data.oldLink
+        ? "That link is out of date. Ask the host for the new watch link or watch code."
+        : "This game isn't open to spectators.";
       el("conn-state").classList.add("error");
       break;
     case "spectate-sync": {
@@ -1913,6 +1994,8 @@ function handleSpectatorData(data) {
 }
 
 function beginOnlineGame() {
+  // The host opens spectator access only now that the game exists (never before).
+  if (room && room.isHost && hostWantsSpectators && !room.watchOpen) startWatchRoom();
   clock = new Clock(timeControlKey, onClockTick, onClockFlag);
   clearClockDisplay();
   clock.start("w");
@@ -1923,7 +2006,7 @@ function beginOnlineGame() {
   setRematchLabel("Rematch");
   el("chat-card").classList.remove("hidden");
   el("chat-list").innerHTML = "";
-  el("btn-copy-watch-game").classList.toggle("hidden", !(room && room.isHost && room.allowSpectators));
+  updateHostWatchUI();
   showScreen("game");
   render();
 }
@@ -1967,7 +2050,7 @@ function handlePeerData(data) {
       opponentName = data.name || "Friend";
       opponentRating = typeof data.rating === "number" ? data.rating : 1200;
       updateSideLabels();
-      if (room && room.isHost && room.allowSpectators) listLiveGame();
+      if (room && room.isHost && room.listPublicly && room.watchOpen) listLiveGame();
       break;
     case "chat":
       appendChat(opponentName, data.text);
@@ -2348,7 +2431,7 @@ async function renderLiveGames() {
   });
   if (fresh.length === 0) {
     note.textContent =
-      "No games are being played live right now. Start one with “Let others watch” ticked and it'll show up here.";
+      "No public games right now. Hosts can choose to list a game here; private games are shared with a watch code or link instead.";
     return;
   }
   note.classList.add("hidden");
@@ -2525,6 +2608,14 @@ function joinByCode() {
 el("btn-join-code").addEventListener("click", joinByCode);
 el("join-code").addEventListener("keydown", (e) => {
   if (e.key === "Enter") joinByCode();
+});
+
+// Shortcut cards on the desktop Home press the matching navigation button.
+document.querySelectorAll("[data-goto]").forEach((card) => {
+  card.addEventListener("click", () => {
+    const target = document.querySelector(`.nav-btn[data-nav="${card.dataset.goto}"]`);
+    if (target) target.click();
+  });
 });
 
 function setNavActive(name) {
@@ -2927,9 +3018,12 @@ function leaveToHome() {
   }
   delistLiveGame();
   delistOpenGame();
+  hostWantsSpectators = false;
+  currentWatchCode = "";
   exitReview();
   stopExtras();
   mode = null;
+  updateHostWatchUI();
   room = null;
   if (clock) clock.stop();
   setNavActive("home");
@@ -3128,16 +3222,65 @@ el("btn-share-app").addEventListener("click", async () => {
   setTimeout(() => note.classList.add("hidden"), 4000);
 });
 
-el("btn-copy-watch-game").addEventListener("click", async () => {
-  const url = `${location.origin}${location.pathname}?watch=${currentRoomCode}`;
-  const btn = el("btn-copy-watch-game");
+async function copyWatchLink(btn, idle) {
+  const url = `${location.origin}${location.pathname}?watch=${currentWatchCode}`;
   try {
     await navigator.clipboard.writeText(url);
     btn.textContent = "Copied!";
   } catch {
     btn.textContent = url; // clipboard blocked: show the link so it can be copied by hand
   }
-  setTimeout(() => (btn.textContent = "Copy watch link"), 2500);
+  setTimeout(() => (btn.textContent = idle), 2500);
+}
+el("btn-copy-watch-game").addEventListener("click", () => copyWatchLink(el("btn-copy-watch-game"), "Copy watch link"));
+// The header chip copies the link too (its label swaps to "Copied!" for a moment).
+el("watch-chip").addEventListener("click", async () => {
+  const label = el("watch-chip").querySelector(".watch-chip-label");
+  await copyWatchLink(label, "Watch");
+});
+
+el("btn-stop-spectators").addEventListener("click", () => {
+  if (!room || !room.isHost) return;
+  if (room.watchOpen) {
+    stopWatchRoom();
+  } else {
+    hostWantsSpectators = true;
+    startWatchRoom(); // a brand-new code: the old one stays dead
+  }
+});
+
+// On a phone the spectator controls are a popup opened from the toolbar.
+el("btn-watch-manage").addEventListener("click", () => el("host-watch-card").classList.toggle("open"));
+document.addEventListener("click", (e) => {
+  const card = el("host-watch-card");
+  if (card.classList.contains("open") && !card.contains(e.target) && !e.target.closest("#btn-watch-manage")) card.classList.remove("open");
+});
+
+// Host options: the privacy choice only matters once spectating is ticked.
+function syncWatchPrivacyOptions() {
+  const on = el("allow-spectators-toggle").checked;
+  el("watch-privacy").classList.toggle("hidden", !on);
+  el("list-public-row").classList.toggle("hidden", !isConfigured()); // there is no public list without the shared database
+}
+el("allow-spectators-toggle").addEventListener("change", syncWatchPrivacyOptions);
+syncWatchPrivacyOptions();
+
+// Watch tab: enter a watch code.
+function watchFromInput() {
+  const code = el("watch-code-input").value.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+  const note = el("watch-code-note");
+  if (code.length < 4) {
+    note.textContent = "Enter the watch code your friend sent you.";
+    note.classList.remove("hidden");
+    return;
+  }
+  note.classList.add("hidden");
+  el("watch-code-input").value = "";
+  startSpectating(code);
+}
+el("btn-watch-code").addEventListener("click", watchFromInput);
+el("watch-code-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") watchFromInput();
 });
 
 // Best-effort cleanup if the host just closes the tab mid-game.

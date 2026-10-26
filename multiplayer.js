@@ -41,9 +41,12 @@ export class Room {
     this.onError = onError;
     this.onSpectatorCountChange = onSpectatorCountChange;
     this.onSpectatorJoin = onSpectatorJoin;
-    // Spectating is opt-in per game (host sets this): otherwise anyone who
-    // happened to learn a room code could silently watch a private game.
+    // Spectating is opt-in per game, and it has its OWN connection and code
+    // (see openWatchRoom): the room code that players use never lets anyone
+    // watch, and a watch code never lets anyone play.
     this.allowSpectators = false;
+    this.listPublicly = false; // set by the page: also list the game in the Watch tab
+    this.watchPeer = null;
     this.peer = null;
     this.conn = null; // the actual opponent, once connected
     this.spectatorConns = []; // read-only watchers (host side only)
@@ -102,12 +105,11 @@ export class Room {
   // code, or the OS suspending the tab) commonly drops the signaling
   // connection to PeerJS's broker — the "network problem" people hit when
   // they step out mid-invite. It reconnects on its own once possible.
-  _watchDisconnect() {
-    const peer = this.peer;
+  _watchDisconnect(peer = this.peer) {
     peer.on("disconnected", () => {
       // A short pause, so an unreachable broker isn't hammered in a tight loop.
-      clearTimeout(this._reconnectTimer);
-      this._reconnectTimer = setTimeout(() => {
+      clearTimeout(peer._reconnectTimer);
+      peer._reconnectTimer = setTimeout(() => {
         if (!peer.destroyed && peer.disconnected) {
           try {
             peer.reconnect();
@@ -122,11 +124,13 @@ export class Room {
   // Call when the page becomes visible again, as a second chance in case
   // the automatic reconnect above didn't already catch it.
   reconnectIfNeeded() {
-    if (this.peer && this.peer.disconnected && !this.peer.destroyed) {
-      try {
-        this.peer.reconnect();
-      } catch {
-        /* already reconnecting */
+    for (const p of [this.peer, this.watchPeer]) {
+      if (p && p.disconnected && !p.destroyed) {
+        try {
+          p.reconnect();
+        } catch {
+          /* already reconnecting */
+        }
       }
     }
   }
@@ -150,16 +154,63 @@ export class Room {
         return;
       }
     }
-    // Either explicitly a spectator, or a second non-spectator arriving
-    // after the seat is taken. Both are treated as spectators — but only if
-    // the host opted in; otherwise politely turn them away.
-    if (!this.allowSpectators) {
-      conn.on("open", () => {
-        conn.send({ type: "spectate-denied" });
-        setTimeout(() => conn.close(), 300);
-      });
-      return;
+    // The seat is taken, or this is a spectator knocking on the players' door
+    // (an old watch link used the room code). Turn them away politely: watching
+    // happens on the separate watch connection only.
+    conn.on("open", () => {
+      conn.send({ type: "spectate-denied", oldLink: isSpectatorConn });
+      setTimeout(() => conn.close(), 300);
+    });
+  }
+
+  // ---- Spectating: a second, spectator-only connection (host side) ----
+
+  get watchOpen() {
+    return !!this.watchPeer && !this.watchPeer.destroyed;
+  }
+
+  // Opens the watch connection under `watchId`. Every connection to it is a
+  // read-only spectator — there is no way to play through it.
+  openWatchRoom(watchId, { onReady, onTaken, onError } = {}) {
+    this.closeWatchRoom();
+    const peer = new Peer(watchId, { config: ICE_CONFIG });
+    this.watchPeer = peer;
+    this.allowSpectators = true;
+    peer.on("open", () => onReady && onReady(watchId));
+    peer.on("connection", (conn) => this._acceptSpectator(conn));
+    peer.on("error", (err) => {
+      if (peer !== this.watchPeer) return;
+      if (err && err.type === "unavailable-id") onTaken && onTaken();
+      else onError && onError(err);
+    });
+    this._watchDisconnect(peer);
+  }
+
+  // Stops spectating: every spectator is disconnected and the code stops working.
+  closeWatchRoom() {
+    for (const conn of this.spectatorConns) {
+      try {
+        conn.close();
+      } catch {
+        /* already gone */
+      }
     }
+    this.spectatorConns = [];
+    this.onSpectatorCountChange && this.onSpectatorCountChange(0);
+    const peer = this.watchPeer;
+    this.watchPeer = null;
+    this.allowSpectators = false;
+    if (peer) {
+      clearTimeout(peer._reconnectTimer);
+      try {
+        peer.destroy();
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  _acceptSpectator(conn) {
     conn.on("open", () => {
       this.spectatorConns.push(conn);
       this.onSpectatorCountChange && this.onSpectatorCountChange(this.spectatorConns.length);
@@ -245,10 +296,9 @@ export class Room {
   }
 
   close() {
-    clearTimeout(this._reconnectTimer);
+    if (this.peer) clearTimeout(this.peer._reconnectTimer);
     if (this.conn) this.conn.close();
-    for (const conn of this.spectatorConns) conn.close();
-    this.spectatorConns = [];
+    this.closeWatchRoom();
     if (this.peer) this.peer.destroy();
   }
 }

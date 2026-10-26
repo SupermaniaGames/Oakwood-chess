@@ -7,16 +7,52 @@ import { Chess } from "./vendor/chess.js";
 import { TACTICS, MATES, PRINCIPLES, STRATEGY, ENDGAMES, GLOSSARY, GAMES } from "./learn-data.js";
 import { allOpenings } from "./openings.js";
 
+// id, label, one-line blurb, tile colours (background, icon), icon.
 const TOPICS = [
-  ["basics", "Basics"],
-  ["tactics", "Tactics"],
-  ["mates", "Checkmates"],
-  ["openings", "Openings"],
-  ["strategy", "Strategy"],
-  ["endgames", "Endgames"],
-  ["games", "Famous games"],
-  ["glossary", "Glossary"],
+  ["basics", "Basics", "How the pieces move, and how to win", "#E3EDD3", "#477747", "piece:wp"],
+  ["tactics", "Tactics", "Forks, pins and tricks that win material", "#F5EBCB", "#8A6A12", "bolt"],
+  ["mates", "Checkmates", "The patterns that end the game", "#F3DDD3", "#A4472F", "piece:wk"],
+  ["openings", "Openings", "How to start a game well", "#DCE8EC", "#3B6B7D", "book"],
+  ["strategy", "Strategy", "Plans for quiet positions", "#E6EBD0", "#5C6B1E", "compass"],
+  ["endgames", "Endgames", "Few pieces left, big decisions", "#EFE4D6", "#7A5A32", "flag"],
+  ["games", "Famous games", "Classic games with the coach's notes", "#F6E6C8", "#9A6A12", "trophy"],
+  ["glossary", "Glossary", "Chess words, explained simply", "#E4E8E1", "#4A5D4A", "text:Aa"],
 ];
+
+const ICON_PATHS = {
+  bolt: "M7 2v11h3v9l7-12h-4l4-8z",
+  book: "M21 5c-1.11-.35-2.33-.5-3.5-.5-1.95 0-4.05.4-5.5 1.5-1.45-1.1-3.55-1.5-5.5-1.5S2.45 4.9 1 6v14.65c0 .25.25.5.5.5.1 0 .15-.05.25-.05C3.1 20.45 5.05 20 6.5 20c1.95 0 4.05.4 5.5 1.5 1.35-.85 3.8-1.5 5.5-1.5 1.65 0 3.35.3 4.75 1.05.1.05.15.05.25.05.25 0 .5-.25.5-.5V6c-.6-.45-1.25-.75-2-1zm0 13.5c-1.1-.35-2.3-.5-3.5-.5-1.7 0-4.15.65-5.5 1.5V8c1.35-.85 3.8-1.5 5.5-1.5 1.2 0 2.4.15 3.5.5v11.5z",
+  compass: "M12 10.9a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2zM12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm2.19 12.19L6 18l3.81-8.19L18 6l-3.81 8.19z",
+  flag: "M14.4 6 14 4H5v17h2v-7h5.6l.4 2h7V6z",
+  trophy: "M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z",
+};
+
+function topicIcon(kind) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("aria-hidden", "true");
+  if (kind.startsWith("piece:")) {
+    svg.setAttribute("viewBox", "0 0 40 40");
+    svg.setAttribute("class", "learn-ic-piece");
+    const use = document.createElementNS(ns, "use");
+    use.setAttribute("href", "#" + kind.slice(6));
+    svg.appendChild(use);
+  } else if (kind.startsWith("text:")) {
+    svg.setAttribute("viewBox", "0 0 24 24");
+    const t = document.createElementNS(ns, "text");
+    t.setAttribute("x", "12"); t.setAttribute("y", "17"); t.setAttribute("text-anchor", "middle");
+    t.setAttribute("font-size", "13"); t.setAttribute("font-weight", "800"); t.setAttribute("fill", "currentColor");
+    t.textContent = kind.slice(5);
+    svg.appendChild(t);
+  } else {
+    svg.setAttribute("viewBox", "0 0 24 24");
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", ICON_PATHS[kind]);
+    path.setAttribute("fill", "currentColor");
+    svg.appendChild(path);
+  }
+  return svg;
+}
 
 // Openings seen in games by these champions (from chess.com's game collections).
 const PLAYED_BY = [
@@ -144,6 +180,14 @@ function stepper(sans, onStep, startFen) {
 
 // ---------- cards ----------
 
+// A small highlighted note with a bold label ("Tip", "Seen in games").
+function callout(label, text) {
+  const p = el("p", "learn-tip");
+  p.appendChild(el("b", null, label));
+  p.appendChild(document.createTextNode(" " + text));
+  return p;
+}
+
 function textBlock(kid, adult) {
   const box = el("div");
   if (kid) box.appendChild(el("p", "learn-kid", kid));
@@ -193,7 +237,7 @@ function conceptCard(item) {
     const cap = el("p", "muted learn-caption", item.sequence.caption);
     card.append(stepper(item.sequence.moves.split(" "), null), cap);
   }
-  if (item.tip) card.appendChild(el("p", "learn-tip", "💡 " + item.tip));
+  if (item.tip) card.appendChild(callout("Tip", item.tip));
   return card;
 }
 
@@ -244,7 +288,7 @@ function renderOpenings(root) {
           const note = textBlock(o.kidNote, o.note);
           const st = stepper(o.moves.split(" "), null);
           body.append(st, note);
-          if (who.length) body.appendChild(el("p", "learn-tip", `♟ Seen in games by ${who.join(" and ")}.`));
+          if (who.length) body.appendChild(callout("Seen in games", `by ${who.join(" and ")}.`));
           const sans = o.moves.split(" ");
           st.go(sans.length);
         }
@@ -301,41 +345,114 @@ function renderGlossary(root) {
 }
 
 // ---------- the tab ----------
+//
+// Phone: a hub of topic tiles; tapping one opens that topic as its own page
+// (with a back button). Desktop: the tiles become a rail on the left and the
+// topic fills the right, so something is always open.
 
 export function createLearn({ tabsEl, basicsEl, contentEl, onReviewGame }) {
-  let current = "basics";
-  const rendered = new Set();
+  const screen = tabsEl.parentElement;
+  const wide = window.matchMedia("(min-width: 900px)");
+  let current = null;
 
-  function show(topic) {
-    current = topic;
-    for (const b of tabsEl.children) b.classList.toggle("active", b.dataset.topic === topic);
-    basicsEl.classList.toggle("hidden", topic !== "basics");
-    contentEl.classList.toggle("hidden", topic === "basics");
-    if (topic === "basics") return;
-    contentEl.innerHTML = "";
-    contentEl.dataset.topic = topic;
-    if (topic === "tactics") renderTactics(contentEl);
-    else if (topic === "mates") renderMates(contentEl);
-    else if (topic === "openings") renderOpenings(contentEl);
-    else if (topic === "strategy") {
-      renderList(contentEl, "Big ideas that help you decide what to do when there's no immediate tactic.", [
-        ...PRINCIPLES.map((p) => ({ name: p.name, text: p.text })),
-        ...STRATEGY,
-      ]);
-    } else if (topic === "endgames") renderList(contentEl, "Few pieces left, big decisions. These ideas win and save endgames.", ENDGAMES);
-    else if (topic === "games") renderGames(contentEl, onReviewGame);
-    else if (topic === "glossary") renderGlossary(contentEl);
-    rendered.add(topic);
-    contentEl.scrollTop = 0;
+  // The banner above the tiles.
+  const hero = el("section", "learn-hero");
+  const heroText = el("div", "learn-hero-text");
+  heroText.append(el("h2", null, "Learn chess"), el("p", null, "Short lessons for beginners, tricks that win games, openings, and the great games of the past."));
+  const heroArt = el("img", "learn-hero-art");
+  heroArt.src = "assets/chess-decoration.png";
+  heroArt.alt = "";
+  heroArt.setAttribute("aria-hidden", "true");
+  hero.append(heroText, heroArt);
+  screen.insertBefore(hero, tabsEl);
+
+  tabsEl.className = "learn-tiles";
+  tabsEl.removeAttribute("role");
+
+  function topicHeader(t) {
+    const [, label, blurb, bg, fg, icon] = t;
+    const h = el("header", "learn-topic-header");
+    const back = el("button", "learn-back", "‹  Topics");
+    back.type = "button";
+    back.onclick = showHub;
+    const ic = el("span", "learn-ic");
+    ic.style.cssText = `--tile-bg:${bg};--tile-fg:${fg}`;
+    ic.appendChild(topicIcon(icon));
+    const txt = el("div", "learn-topic-text");
+    txt.append(el("h2", null, label), el("p", "muted", blurb));
+    h.append(back, ic, txt);
+    return h;
   }
 
-  for (const [id, label] of TOPICS) {
-    const b = el("button", "chip" + (id === "basics" ? " active" : ""), label);
+  function markTiles() {
+    for (const b of tabsEl.children) b.classList.toggle("active", b.dataset.topic === current);
+  }
+
+  function showHub() {
+    current = null;
+    screen.dataset.view = "hub";
+    screen.dataset.topic = "";
+    basicsEl.classList.add("hidden");
+    contentEl.classList.add("hidden");
+    markTiles();
+    window.scrollTo(0, 0);
+  }
+
+  function show(topic) {
+    const t = TOPICS.find((x) => x[0] === topic);
+    if (!t) return;
+    current = topic;
+    screen.dataset.view = "topic";
+    screen.dataset.topic = topic;
+    markTiles();
+    basicsEl.classList.toggle("hidden", topic !== "basics");
+    contentEl.classList.toggle("hidden", topic === "basics");
+    if (topic === "basics") {
+      basicsEl.querySelectorAll(":scope > .learn-topic-header").forEach((n) => n.remove());
+      basicsEl.prepend(topicHeader(t));
+    } else {
+      contentEl.innerHTML = "";
+      contentEl.dataset.topic = topic;
+      contentEl.appendChild(topicHeader(t));
+      if (topic === "tactics") renderTactics(contentEl);
+      else if (topic === "mates") renderMates(contentEl);
+      else if (topic === "openings") renderOpenings(contentEl);
+      else if (topic === "strategy") {
+        renderList(contentEl, "Big ideas that help you decide what to do when there's no immediate tactic.", [
+          ...PRINCIPLES.map((p) => ({ name: p.name, text: p.text })),
+          ...STRATEGY,
+        ]);
+      } else if (topic === "endgames") renderList(contentEl, "Few pieces left, big decisions. These ideas win and save endgames.", ENDGAMES);
+      else if (topic === "games") renderGames(contentEl, onReviewGame);
+      else if (topic === "glossary") renderGlossary(contentEl);
+    }
+    window.scrollTo(0, 0);
+  }
+
+  for (const t of TOPICS) {
+    const [id, label, blurb, bg, fg, icon] = t;
+    const b = el("button", "learn-tile");
     b.type = "button";
     b.dataset.topic = id;
+    b.style.cssText = `--tile-bg:${bg};--tile-fg:${fg}`;
+    const ic = el("span", "learn-ic");
+    ic.appendChild(topicIcon(icon));
+    const txt = el("span", "learn-tile-text");
+    txt.append(el("b", null, label), el("small", null, blurb));
+    b.append(ic, txt);
     b.onclick = () => show(id);
     tabsEl.appendChild(b);
   }
 
-  return { show, current: () => current };
+  // Desktop always has a topic open; phones start at the hub.
+  const settle = () => {
+    if (wide.matches && !current) show("basics");
+  };
+  wide.addEventListener("change", settle);
+  screen.dataset.view = "hub";
+  basicsEl.classList.add("hidden");
+  contentEl.classList.add("hidden");
+  settle();
+
+  return { show, showHub, current: () => current };
 }
