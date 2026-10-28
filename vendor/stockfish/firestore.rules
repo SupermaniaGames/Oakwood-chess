@@ -1,0 +1,102 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // The account's own profile (name, rating, games), keyed by the Firebase
+    // uid so the same account sees the same profile on every device. Private:
+    // only the owner can read or write it.
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Public copy of name/rating/games for the leaderboard. Anyone can read
+    // (leaderboard); you can only write your own.
+    match /players/{uid} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Unique usernames. Only the owner can create/change/delete an entry,
+    // so nobody can steal or overwrite someone else's name.
+    match /usernames/{name} {
+      allow read: if true;
+      allow create: if request.auth != null
+                     && request.resource.data.uid == request.auth.uid;
+      allow update: if request.auth != null
+                     && resource.data.uid == request.auth.uid
+                     && request.resource.data.uid == request.auth.uid;
+      allow delete: if request.auth != null
+                     && resource.data.uid == request.auth.uid;
+    }
+
+    // Online tab lobby: rooms waiting for an opponent.
+    match /openGames/{code} {
+      allow read: if true;
+      allow create: if request.auth != null
+                     && request.resource.data.hostUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                     && resource.data.hostUid == request.auth.uid;
+    }
+
+    // Watch tab: games the host chose to let others watch.
+    match /liveGames/{code} {
+      allow read: if true;
+      allow create: if request.auth != null
+                     && request.resource.data.hostUid == request.auth.uid;
+      allow update, delete: if request.auth != null
+                     && resource.data.hostUid == request.auth.uid;
+    }
+
+    // Friends. The document id is "{fromUid}_{toUid}". Only the two people involved
+    // can see it. The person asked can accept it (the one allowed change, to
+    // "accepted"); either of them can delete it (decline, cancel, or unfriend).
+    match /friendRequests/{id} {
+      allow read: if request.auth != null
+                   && (resource.data.fromUid == request.auth.uid
+                       || resource.data.toUid == request.auth.uid);
+      allow create: if request.auth != null
+                     && request.resource.data.fromUid == request.auth.uid
+                     && request.resource.data.toUid != request.auth.uid
+                     && request.resource.data.status == 'pending'
+                     && id == request.auth.uid + '_' + request.resource.data.toUid;
+      allow update: if request.auth != null
+                     && resource.data.toUid == request.auth.uid
+                     && request.resource.data.status == 'accepted'
+                     && request.resource.data.fromUid == resource.data.fromUid
+                     && request.resource.data.toUid == resource.data.toUid;
+      allow delete: if request.auth != null
+                     && (resource.data.fromUid == request.auth.uid
+                         || resource.data.toUid == request.auth.uid);
+    }
+
+    // "Come and play me" invites between friends. They carry the room code, so
+    // only the sender and the invited friend can read one. An invite can only be
+    // sent to someone who has accepted you as a friend.
+    match /challenges/{id} {
+      allow read: if request.auth != null
+                   && (resource.data.fromUid == request.auth.uid
+                       || resource.data.toUid == request.auth.uid);
+      allow create: if request.auth != null
+                     && request.resource.data.fromUid == request.auth.uid
+                     && request.resource.data.toUid != request.auth.uid
+                     && request.resource.data.status == 'pending'
+                     && ((exists(/databases/$(database)/documents/friendRequests/$(request.auth.uid + '_' + request.resource.data.toUid))
+                          && get(/databases/$(database)/documents/friendRequests/$(request.auth.uid + '_' + request.resource.data.toUid)).data.status == 'accepted')
+                         || (exists(/databases/$(database)/documents/friendRequests/$(request.resource.data.toUid + '_' + request.auth.uid))
+                          && get(/databases/$(database)/documents/friendRequests/$(request.resource.data.toUid + '_' + request.auth.uid)).data.status == 'accepted'));
+      // The invited friend answers (accepted / declined); the sender can cancel.
+      // Nobody can change who it is between, or the room code.
+      allow update: if request.auth != null
+                     && request.resource.data.fromUid == resource.data.fromUid
+                     && request.resource.data.toUid == resource.data.toUid
+                     && request.resource.data.roomCode == resource.data.roomCode
+                     && ((resource.data.toUid == request.auth.uid
+                          && request.resource.data.status in ['accepted', 'declined'])
+                         || (resource.data.fromUid == request.auth.uid
+                             && request.resource.data.status == 'cancelled'));
+      allow delete: if request.auth != null
+                     && (resource.data.fromUid == request.auth.uid
+                         || resource.data.toUid == request.auth.uid);
+    }
+  }
+}
