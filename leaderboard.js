@@ -563,3 +563,218 @@ export async function fetchOpenGames(max = 30) {
     return null;
   }
 }
+
+// ===================================================================
+// Friends and challenges (need the shared database).
+//
+//   friendRequests/{fromUid}_{toUid}   a request, then — once the other person
+//                                      accepts — a friendship (status "accepted")
+//   challenges/{id}                    "come and play me": carries the room code
+//                                      so the friend never has to type it
+//
+// Both are readable only by the two people involved.
+// ===================================================================
+
+const CHALLENGE_LIFETIME_MS = 10 * 60 * 1000; // an old, unanswered invite is ignored
+
+function stamp(d) {
+  const t = d.createdAt;
+  if (t && typeof t.toMillis === "function") return t.toMillis();
+  if (typeof t === "number") return t;
+  return Date.now(); // a write that hasn't reached the server yet
+}
+
+async function myFriendIdentity() {
+  await ready();
+  if (!state || !state.auth.currentUser) return null;
+  const uid = state.auth.currentUser.uid;
+  const profile = await fetchMyProfile();
+  return { uid, name: (profile && profile.name) || "" };
+}
+
+// Add a friend by username. If they had already asked you, you simply become friends.
+export async function sendFriendRequest(rawName) {
+  const me = await myFriendIdentity();
+  if (!me) return { ok: false, error: "Friends need the shared database — see the README." };
+  if (!me.name) return { ok: false, error: "Choose a username in Account first, so your friend can see who you are." };
+  const name = (rawName || "").trim();
+  if (!name) return { ok: false, error: "Type your friend's username." };
+  try {
+    const { doc, getDoc, setDoc, updateDoc, serverTimestamp } = state.store;
+    const found = await getDoc(doc(state.db, "usernames", name.toLowerCase()));
+    if (!found.exists()) return { ok: false, error: `No player is called “${name}”. Check the spelling.` };
+    const them = found.data();
+    if (them.uid === me.uid) return { ok: false, error: "That's you!" };
+    const mine = doc(state.db, "friendRequests", `${me.uid}_${them.uid}`);
+    const theirs = doc(state.db, "friendRequests", `${them.uid}_${me.uid}`);
+    const [a, b] = await Promise.all([getDoc(mine), getDoc(theirs)]);
+    if ((a.exists() && a.data().status === "accepted") || (b.exists() && b.data().status === "accepted")) {
+      return { ok: false, error: `You and ${them.name || name} are already friends.` };
+    }
+    if (b.exists() && b.data().status === "pending") {
+      await updateDoc(theirs, { status: "accepted" }); // they asked first: this makes it mutual
+      return { ok: true, became: "friends", name: them.name || name };
+    }
+    if (a.exists()) return { ok: false, error: `You already asked ${them.name || name}. They need to accept.` };
+    await setDoc(mine, {
+      fromUid: me.uid,
+      toUid: them.uid,
+      fromName: me.name,
+      toName: them.name || name,
+      status: "pending",
+      createdAt: serverTimestamp(),
+    });
+    return { ok: true, became: "requested", name: them.name || name };
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't send the friend request.", err);
+    return { ok: false, error: err?.code === "permission-denied" ? "The friends rules aren't published yet — see the README." : "Couldn't reach the database. Try again." };
+  }
+}
+
+export async function answerFriendRequest(id, accept) {
+  await ready();
+  if (!state) return false;
+  try {
+    const { doc, updateDoc, deleteDoc } = state.store;
+    if (accept) await updateDoc(doc(state.db, "friendRequests", id), { status: "accepted" });
+    else await deleteDoc(doc(state.db, "friendRequests", id));
+    return true;
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't answer the friend request.", err);
+    return false;
+  }
+}
+
+// Cancel a request you sent, or remove a friend.
+export const removeFriendLink = (id) => answerFriendRequest(id, false);
+
+// Live view of everything social. Calls back with:
+//   { uid, friends, requestsIn, requestsOut, challengesIn, challengesOut }
+// each time anything changes. Returns an unsubscribe function.
+export function watchSocial(cb) {
+  let unsubs = [];
+  let stopped = false;
+  ready().then(() => {
+    if (stopped || !state || !state.auth.currentUser) return cb(null);
+    const uid = state.auth.currentUser.uid;
+    const { collection, query, where, onSnapshot } = state.store;
+    const data = { reqFrom: [], reqTo: [], chFrom: [], chTo: [] };
+    const emit = () => {
+      const now = Date.now();
+      const requests = [...data.reqFrom, ...data.reqTo];
+      const friends = requests
+        .filter((r) => r.status === "accepted")
+        .map((r) => (r.fromUid === uid ? { id: r.id, uid: r.toUid, name: r.toName } : { id: r.id, uid: r.fromUid, name: r.fromName }))
+        .sort((x, y) => x.name.localeCompare(y.name));
+      const fresh = (c) => c.status === "pending" && now - c._t < CHALLENGE_LIFETIME_MS;
+      cb({
+        uid,
+        friends,
+        requestsIn: data.reqTo.filter((r) => r.status === "pending"),
+        requestsOut: data.reqFrom.filter((r) => r.status === "pending"),
+        challengesIn: data.chTo.filter(fresh).sort((x, y) => y._t - x._t),
+        challengesOut: data.chFrom.filter(fresh).sort((x, y) => y._t - x._t),
+        challengesOutAll: data.chFrom, // every status, so the sender can see "declined"
+      });
+    };
+    const listen = (coll, field, key, decorate) => {
+      try {
+        unsubs.push(
+          onSnapshot(
+            query(collection(state.db, coll), where(field, "==", uid)),
+            (snap) => {
+              data[key] = snap.docs.map((d) => decorate({ id: d.id, ...d.data() }));
+              emit();
+            },
+            (err) => console.warn(`Oakwood Chess: couldn't watch ${coll}.`, err)
+          )
+        );
+      } catch (err) {
+        console.warn("Oakwood Chess: couldn't watch friends.", err);
+      }
+    };
+    const withTime = (d) => ({ ...d, _t: stamp(d) });
+    listen("friendRequests", "fromUid", "reqFrom", (d) => d);
+    listen("friendRequests", "toUid", "reqTo", (d) => d);
+    listen("challenges", "toUid", "chTo", withTime);
+    listen("challenges", "fromUid", "chFrom", withTime);
+  });
+  return () => {
+    stopped = true;
+    unsubs.forEach((u) => {
+      try {
+        u();
+      } catch {
+        /* already gone */
+      }
+    });
+    unsubs = [];
+  };
+}
+
+// Public name + rating of a few players (for the friends list).
+export async function fetchPlayerCards(uids) {
+  await ready();
+  const out = {};
+  if (!state) return out;
+  const { doc, getDoc } = state.store;
+  await Promise.all(
+    uids.map(async (uid) => {
+      try {
+        const snap = await getDoc(doc(state.db, "players", uid));
+        if (snap.exists()) out[uid] = snap.data();
+      } catch {
+        /* a missing rating just shows as blank */
+      }
+    })
+  );
+  return out;
+}
+
+// Invite a friend to a game in an open room. Returns the challenge id, or "".
+export async function sendChallenge({ toUid, toName, timeControl, roomCode }) {
+  const me = await myFriendIdentity();
+  if (!me || !me.name) return "";
+  try {
+    const { collection, addDoc, serverTimestamp } = state.store;
+    const ref = await addDoc(collection(state.db, "challenges"), {
+      fromUid: me.uid,
+      toUid,
+      fromName: me.name,
+      toName: toName || "",
+      timeControl: timeControl || "untimed",
+      roomCode,
+      status: "pending",
+      createdAt: serverTimestamp(),
+    });
+    return ref.id;
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't send the invite.", err);
+    return "";
+  }
+}
+
+// status: "accepted" | "declined" (the invited friend), "cancelled" (the sender).
+export async function answerChallenge(id, status) {
+  await ready();
+  if (!state || !id) return false;
+  try {
+    const { doc, updateDoc } = state.store;
+    await updateDoc(doc(state.db, "challenges", id), { status });
+    return true;
+  } catch (err) {
+    console.warn("Oakwood Chess: couldn't answer the invite.", err);
+    return false;
+  }
+}
+
+export async function deleteChallenge(id) {
+  await ready();
+  if (!state || !id) return;
+  try {
+    const { doc, deleteDoc } = state.store;
+    await deleteDoc(doc(state.db, "challenges", id));
+  } catch {
+    /* best-effort cleanup; an old invite expires on its own */
+  }
+}

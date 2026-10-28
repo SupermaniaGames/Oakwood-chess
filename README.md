@@ -6,14 +6,26 @@ files.
 
 ## Getting around
 
-- **Mobile:** a bottom bar — Home, Learn, Puzzles, Watch, Account. During a game it
-  switches to the game toolbar (Flip · Undo · Resign · New game · Home).
-- **Desktop:** a left sidebar with the same five sections.
-- **Home** is one big **Play** button plus a mode switcher —
-  **Online · vs Computer · Local / Friend**. The button always says what it
-  will start ("vs Computer · 1000 · White", "Local · 3 | 2"). History and
-  Share sit below. Rating, sign-in and the leaderboard live under
-  **Account**; lessons under **Learn**.
+- **Mobile:** a bottom bar — Home, Learn, Puzzles, Friends, Watch, Account. During
+  a game it switches to the game toolbar (Flip · Undo · Resign · New game · Home).
+- **Desktop:** a left sidebar with the same six sections.
+- **Ways to play** (everywhere): **Play Bots** (the computer), **Play a Friend**
+  (an online room, or an invite to someone on your friends list), **Play in
+  Person** (two players on one board, one device), **Play Coach**, and **Online**
+  (the lobby of open games).
+- **Phone Home** works like chess.com's app: a hub with **Play Bots** and **Play
+  Coach** shortcuts, your **Friends** row, and a big green **Play** button. **Play**
+  opens **New Game**: a time-control button (opens a **Time** sheet grouped as
+  Untimed / Bullet / Blitz / Rapid), a green **Start Game**, and a list — Play a
+  Friend, Play Bots, Play Coach, Play in Person, Play Online. Each opens its own
+  screen; the phone's Back button steps back one screen. *Start Game* looks for an
+  opponent online when the shared database is set up, and otherwise starts a bot
+  game (it says which under the button).
+- **Desktop Home** is a dashboard: a hero with the big **Play** button and a mode
+  switcher (**Online · Play Bots · Play a Friend · Play in Person**), shortcut
+  cards, and History. The button always says what it will start ("Play Bots ·
+  1000 · White", "Play in Person · 3 | 2"). Rating, sign-in and the leaderboard live
+  under **Account**; lessons under **Learn**.
 - **Puzzles** have their own button in the bottom navigation (side navigation on wide screens); see *Puzzles* below.
 - **Back on Home asks first** (an "Exit Oakwood Chess?" popup). Pulling the page
   down no longer refreshes it, so a stray swipe can't throw you out of a game.
@@ -39,9 +51,9 @@ files.
   waiting screen both say which. *Both players need the current version of
   the app for the newer controls* — an older cached copy doesn't know them
   and will treat the game as untimed.
-- **Locally on one PC:** click "Play locally, one board two players" and pass
-  the device back and forth, taking turns clicking the board.
-- **Vs the computer:** pick a bot level — nine rungs from 250 to 1800,
+- **Play in Person:** two players, one board, one device — pass the device back
+  and forth, taking turns clicking the board.
+- **Play Bots:** pick a bot level — nine rungs from 250 to 1800,
   grouped Beginner / Intermediate / Advanced — and which color you want,
   right on the home screen. It runs entirely offline. The Elo numbers are
   *nominal labels*: the ladder is tuned so each rung reliably beats the one
@@ -53,9 +65,10 @@ files.
   before creating a room, tap pieces to remove them (kings always stay),
   then create the room — your friend starts from the same position.
   Rematches and replays use it too.
-- **Online with a friend:** click "Create a room for a friend", then share
+- **Play a Friend (room):** open *Play a Friend* and press the button, then share
   the code or link. When they open it, you're connected and playing. You're
-  White, they're Black.
+  White, they're Black. (With friends set up, you can instead invite someone from
+  your list — see *Friends and challenges*.)
 
 Moves travel directly between the two browsers over WebRTC (peer-to-peer) —
 the only outside service involved is PeerJS's free public broker, which just
@@ -73,6 +86,32 @@ anywhere with HTTPS — installability needs a secure origin):
 - Once installed it also works offline for local games (the board, rules and
   your saved history are all cached on the device — only online multiplayer
   needs a live connection).
+
+## Friends and challenges
+
+Needs the shared database (Firebase, see below) and a username (Account).
+
+- **Friends tab** (bottom bar / sidebar): **Add a friend** by typing their username.
+  They get a request to accept (you appear under *Friend requests* until they do;
+  if they had already asked you, you simply become friends). Your friends list shows
+  each friend's rating, with **Invite** and **Remove**. A red badge on the tab
+  counts requests and invites waiting for you.
+- **Invite a friend to a game:** tap **Invite** (on the Friends tab, or in *Play a
+  Friend*). Oakwood opens a room for you with the time control picked on Home and
+  sends your friend an invite that **carries the room code**, so they never type it.
+- **The popup:** while the app is open, your friend sees "*NAME invited you to play*"
+  with **Accept** / **Decline**. Accept connects them to your room and starts the
+  game. If they decline you're told, and the room stays open for a link. If you
+  leave the room first, the invite is withdrawn and their popup closes.
+- **Challenges tab** (inside Friends): **Invited to play** (accept or decline) and
+  **Invites you sent** (cancel). If you were busy in a game when the invite came,
+  there is no popup — it waits here, with the badge on the tab.
+- **Limits:** invites only reach someone who has the app **open** (there are no
+  push notifications when it is closed). An unanswered invite expires after 10
+  minutes. You can only invite accepted friends, and an invite and the room it
+  points to are only readable by the two of you.
+- The game itself is the same peer-to-peer connection as any room, so the notes in
+  *When a friend can't connect* apply to it too.
 
 ## Multiplayer: codes, links, and connection problems
 
@@ -105,11 +144,37 @@ anywhere with HTTPS — installability needs a secure origin):
 - **Updates wait for you.** A new version of the app no longer reloads the page while
   you are in a room or a game (or on a first visit through a room link); it applies
   once you are back on Home.
-- **Relays.** Phones on mobile networks often cannot reach each other directly and
-  need a TURN relay. The app lists PeerJS's own free relays and Open Relay's, but
-  these are free public services that can be limited or withdrawn. For something you
-  can count on, put your own TURN credentials (for example a free Metered or
-  Cloudflare account) in `CUSTOM_ICE_SERVERS` at the top of `multiplayer.js`.
+- **What "Still can't connect" means.** The matchmaking server found the other
+  phone, but the two could not open a direct data path. That is almost always a
+  network issue: phones on different mobile networks or on Wi-Fi with client
+  isolation (many carriers share one address between many phones). The fix is a
+  **relay (TURN) server**, which carries the game when a direct path is impossible.
+- **Connection check.** When a connection fails, the message now ends with a
+  check: either "a relay server is reachable from this phone, so trying again can
+  work" or "this phone could not reach any relay server". The second means
+  connections to people on other networks will keep failing until you add a relay
+  you control (below).
+- **Using a relay you control (recommended).** The app ships with PeerJS's and Open
+  Relay's free public relays, but free public services can be limited or withdrawn.
+  A game is a few kilobytes, so even a small free allowance lasts for a very long
+  time. For example, with a free [Metered](https://www.metered.ca/tools/openrelay/)
+  account (its Open Relay page advertises 20 GB of free relay traffic a month; its
+  general pricing page lists a smaller free trial — check what your account gets):
+  1. Sign up, then open the TURN credentials in the dashboard and copy the server
+     addresses plus your username and password.
+  2. In `multiplayer.js`, fill `CUSTOM_ICE_SERVERS` near the top, copying the
+     addresses exactly as the dashboard shows them, e.g.
+     ```js
+     const CUSTOM_ICE_SERVERS = [
+       { urls: "turn:global.relay.metered.ca:80", username: "YOUR-USERNAME", credential: "YOUR-PASSWORD" },
+       { urls: "turn:global.relay.metered.ca:443", username: "YOUR-USERNAME", credential: "YOUR-PASSWORD" },
+       { urls: "turns:global.relay.metered.ca:443?transport=tcp", username: "YOUR-USERNAME", credential: "YOUR-PASSWORD" },
+     ];
+     ```
+  3. Bump `CACHE_NAME` in `sw.js`, deploy, and have **both** players reopen the app.
+  4. Both phones must be on the new version. The credentials are visible to anyone who
+     views the page source, so use a free account with a usage cap. Any TURN provider
+     works the same way (a Cloudflare, Twilio or self-hosted `coturn` account too).
 
 ## Online (play someone you haven't met)
 
@@ -518,27 +583,23 @@ paste six values into one file. No credit card required.
    rules_version = '2';
    service cloud.firestore {
      match /databases/{database}/documents {
+
+       // The account's own profile (name, rating, games), keyed by the Firebase
+       // uid so the same account sees the same profile on every device. Private:
+       // only the owner can read or write it.
        match /users/{uid} {
          allow read, write: if request.auth != null && request.auth.uid == uid;
        }
+
+       // Public copy of name/rating/games for the leaderboard. Anyone can read
+       // (leaderboard); you can only write your own.
        match /players/{uid} {
          allow read: if true;
          allow write: if request.auth != null && request.auth.uid == uid;
        }
-       match /openGames/{code} {
-         allow read: if true;
-         allow create: if request.auth != null
-                        && request.resource.data.hostUid == request.auth.uid;
-         allow update, delete: if request.auth != null
-                        && resource.data.hostUid == request.auth.uid;
-       }
-       match /liveGames/{code} {
-         allow read: if true;
-         allow create: if request.auth != null
-                        && request.resource.data.hostUid == request.auth.uid;
-         allow update, delete: if request.auth != null
-                        && resource.data.hostUid == request.auth.uid;
-       }
+
+       // Unique usernames. Only the owner can create/change/delete an entry,
+       // so nobody can steal or overwrite someone else's name.
        match /usernames/{name} {
          allow read: if true;
          allow create: if request.auth != null
@@ -549,12 +610,88 @@ paste six values into one file. No credit card required.
          allow delete: if request.auth != null
                         && resource.data.uid == request.auth.uid;
        }
+
+       // Online tab lobby: rooms waiting for an opponent.
+       match /openGames/{code} {
+         allow read: if true;
+         allow create: if request.auth != null
+                        && request.resource.data.hostUid == request.auth.uid;
+         allow update, delete: if request.auth != null
+                        && resource.data.hostUid == request.auth.uid;
+       }
+
+       // Watch tab: games the host chose to let others watch.
+       match /liveGames/{code} {
+         allow read: if true;
+         allow create: if request.auth != null
+                        && request.resource.data.hostUid == request.auth.uid;
+         allow update, delete: if request.auth != null
+                        && resource.data.hostUid == request.auth.uid;
+       }
+
+       // Friends. The document id is "{fromUid}_{toUid}". Only the two people involved
+       // can see it. The person asked can accept it (the one allowed change, to
+       // "accepted"); either of them can delete it (decline, cancel, or unfriend).
+       match /friendRequests/{id} {
+         allow read: if request.auth != null
+                      && (resource.data.fromUid == request.auth.uid
+                          || resource.data.toUid == request.auth.uid);
+         allow create: if request.auth != null
+                        && request.resource.data.fromUid == request.auth.uid
+                        && request.resource.data.toUid != request.auth.uid
+                        && request.resource.data.status == 'pending'
+                        && id == request.auth.uid + '_' + request.resource.data.toUid;
+         allow update: if request.auth != null
+                        && resource.data.toUid == request.auth.uid
+                        && request.resource.data.status == 'accepted'
+                        && request.resource.data.fromUid == resource.data.fromUid
+                        && request.resource.data.toUid == resource.data.toUid;
+         allow delete: if request.auth != null
+                        && (resource.data.fromUid == request.auth.uid
+                            || resource.data.toUid == request.auth.uid);
+       }
+
+       // "Come and play me" invites between friends. They carry the room code, so
+       // only the sender and the invited friend can read one. An invite can only be
+       // sent to someone who has accepted you as a friend.
+       match /challenges/{id} {
+         allow read: if request.auth != null
+                      && (resource.data.fromUid == request.auth.uid
+                          || resource.data.toUid == request.auth.uid);
+         allow create: if request.auth != null
+                        && request.resource.data.fromUid == request.auth.uid
+                        && request.resource.data.toUid != request.auth.uid
+                        && request.resource.data.status == 'pending'
+                        && ((exists(/databases/$(database)/documents/friendRequests/$(request.auth.uid + '_' + request.resource.data.toUid))
+                             && get(/databases/$(database)/documents/friendRequests/$(request.auth.uid + '_' + request.resource.data.toUid)).data.status == 'accepted')
+                            || (exists(/databases/$(database)/documents/friendRequests/$(request.resource.data.toUid + '_' + request.auth.uid))
+                             && get(/databases/$(database)/documents/friendRequests/$(request.resource.data.toUid + '_' + request.auth.uid)).data.status == 'accepted'));
+         // The invited friend answers (accepted / declined); the sender can cancel.
+         // Nobody can change who it is between, or the room code.
+         allow update: if request.auth != null
+                        && request.resource.data.fromUid == resource.data.fromUid
+                        && request.resource.data.toUid == resource.data.toUid
+                        && request.resource.data.roomCode == resource.data.roomCode
+                        && ((resource.data.toUid == request.auth.uid
+                             && request.resource.data.status in ['accepted', 'declined'])
+                            || (resource.data.fromUid == request.auth.uid
+                                && request.resource.data.status == 'cancelled'));
+         allow delete: if request.auth != null
+                        && (resource.data.fromUid == request.auth.uid
+                            || resource.data.toUid == request.auth.uid);
+       }
      }
    }
    ```
    `openGames` is the Online tab's lobby of rooms waiting for an opponent.
    `liveGames` is the Watch tab's list of games hosts have opted to share
    (only the host who listed a game can change or remove it).
+   `friendRequests` holds friend requests and, once accepted, friendships (the
+   document id is `<fromUid>_<toUid>`; only those two people can read it, only the
+   person asked can accept, and either can delete it). `challenges` are the "come
+   and play me" invites: only the sender and the invited friend can read one, an
+   invite can only be created for an accepted friend, and the roles are fixed (the
+   friend can accept or decline, the sender can cancel).
    `users` is the account's private profile; `players` is its public copy for
    the leaderboard (name, rating); `usernames` is a separate
    lookup collection that's what actually makes usernames unique — claiming
@@ -627,7 +764,7 @@ through the unique-checking path.
 4. GitHub will publish the site at
    `https://<your-username>.github.io/<your-repo>/`. It can take a minute or
    two to go live the first time.
-5. Share that link with a friend — when one of you clicks "Create a room"
+5. Share that link with a friend — when one of you opens **Play a Friend**
    and sends the generated room link, you can play from anywhere, not just
    the same PC.
 
@@ -664,36 +801,47 @@ firebase-config.js  Your Firebase project config (edit this — see above)
 manifest.json     PWA manifest (name, icons, colors)
 sw.js             Service worker — offline app-shell caching
 assets/           Home hero art: logo, king-and-knight drawing, oak-leaf corners
-icons/            App icons + favicon (placeholder — see below)
+icons/            App icons (normal + maskable), favicon, coach faces — see below
 vendor/chess.js   Move generation & rules (chess.js, vendored, MIT/BSD)
 vendor/peerjs.min.js   WebRTC peer connections (PeerJS, vendored, MIT)
 ```
 
 ## Using your own logo / icon
 
-`icons/` currently has a placeholder (a knight glyph on the app's green).
-To swap in your own game icon:
+`icons/` holds the app icon in the sizes Android, iPhone and browsers need:
 
-1. Replace `icons/icon.svg` with your artwork, or just drop in your own
-   square PNG/JPG.
-2. Regenerate the sized copies (192×192, 512×512, a 180×180 Apple touch
-   icon, and a 32×32 favicon) — any image tool works, or if you have
-   Node + `sharp` installed:
-   ```bash
-   node -e "
-   const sharp = require('sharp');
-   const src = 'path/to/your-logo.png';
-   sharp(src).resize(192,192).toFile('icons/icon-192.png');
-   sharp(src).resize(512,512).toFile('icons/icon-512.png');
-   sharp(src).resize(180,180).toFile('icons/apple-touch-icon.png');
-   sharp(src).resize(32,32).toFile('icons/favicon-32.png');
-   "
-   ```
-3. Keep the same file names and `manifest.json`/`index.html` need no
-   changes — they already point at these paths.
+| File | Size | What it is |
+|---|---|---|
+| `icon-192.png`, `icon-512.png` | 192, 512 px | The normal icon (transparent rounded corners). Used on the page and by browsers. |
+| `icon-maskable-192.png`, `icon-maskable-512.png` | 192, 512 px | **For Android's home-screen icon and splash screen.** Square, solid white, the logo kept inside the central safe zone. |
+| `apple-touch-icon.png` | 180 px | iPhone home-screen icon (a full square, no transparency). |
+| `favicon-32.png` | 32 px | Browser tab icon. |
 
-If you'd rather send me the actual image files, I can generate and drop in
-all the sizes for you directly.
+**Why a separate maskable icon?** Android cuts the home-screen and splash icon
+to a circle (or a squircle, depending on the phone). If the artwork runs to the
+edge of the square, the edges are lost — that's the cut-off "OAKWOOD / CHESS"
+splash screen. A maskable icon keeps everything that matters inside the
+*safe zone*: a circle in the middle of the image with a diameter of 80% of the
+width. Keep the logo (all of its letters) inside about **60% of the width**,
+centred, on a solid background colour that goes all the way to the edges.
+
+To use your own picture:
+
+1. Start from a square PNG, at least 1024 × 1024. Make two versions:
+   - **Normal:** your logo filling the square (transparent or coloured corners).
+   - **Maskable:** your logo in the middle, about 60% of the width, on a
+     solid, full-bleed background (white works well).
+2. Save them at 192 × 192 and 512 × 512 as the four files above (plus a
+   180 × 180 `apple-touch-icon.png` and a 32 × 32 `favicon-32.png`). Keep the
+   same file names and nothing else needs to change.
+3. Check the maskable one at <https://maskable.app/editor> (upload it and look
+   at the circle). Keep every letter inside the circle.
+4. Bump `CACHE_NAME` in `sw.js`.
+
+**After changing icons or `background_color`, reinstall the app on the phone.**
+Android saves the icon and splash colour when the app is added to the home
+screen: remove the home-screen app, open the site in Chrome, and use *Add to
+Home screen / Install app* again.
 
 ## Notes & limitations
 

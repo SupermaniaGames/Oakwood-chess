@@ -1,5 +1,5 @@
 import { Chess } from "./vendor/chess.js";
-import { Room } from "./multiplayer.js";
+import { Room, checkRelayAvailable } from "./multiplayer.js";
 import { Clock, formatMs, TIME_CONTROLS } from "./clock.js";
 import {
   saveInProgressLocalGame,
@@ -31,6 +31,14 @@ import {
   unregisterOpenGame,
   fetchOpenGames,
   getFirestoreErrorCode,
+  sendFriendRequest,
+  answerFriendRequest,
+  removeFriendLink,
+  watchSocial,
+  fetchPlayerCards,
+  sendChallenge,
+  answerChallenge,
+  deleteChallenge,
 } from "./leaderboard.js";
 import { chooseBotMove, TIERS } from "./bot.js";
 import { createReview } from "./review.js";
@@ -53,6 +61,20 @@ function generateRoomCode(len = 4) {
   let out = "";
   for (let i = 0; i < len; i++) out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
   return out;
+}
+
+// After a failed connection, say whether a relay server can be reached from this phone.
+let relayCheckRunning = false;
+async function appendRelayReport(node) {
+  if (relayCheckRunning) return;
+  relayCheckRunning = true;
+  const r = await checkRelayAvailable();
+  relayCheckRunning = false;
+  const line =
+    r.relay > 0
+      ? "Connection check: a relay server is reachable from this phone, so trying again can work."
+      : "Connection check: this phone could not reach any relay server, which is what connects people on different networks. See the README (“When friends can't connect”).";
+  if (node && !node.textContent.includes("Connection check:")) node.textContent += "\n\n" + line;
 }
 
 function describeConnError(err) {
@@ -120,7 +142,8 @@ let liveListedCode = "";
 let currentWatchCode = ""; // host only: the code spectators use (not the room code)
 let hostWantsSpectators = false; // host only: spectating was ticked and hasn't been stopped
 let lobbyListed = false; // host only: is this room listed in the Online lobby?
-let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "local"
+let homeMode = localStorage.getItem("oakwood.homeMode") || "bot"; // "online" | "bot" | "friend" | "person"
+if (homeMode === "local") homeMode = "person"; // renamed
 let reviewPly = null; // null = the live position; a number = browsing earlier moves
 let reviewLastMove = null;
 let flagCheckTimer = 0; // waiting for the friend's phone to confirm their clock really ran out
@@ -147,10 +170,12 @@ function setRematchLabel(text) {
 }
 
 function showScreen(name) {
+  const cameFrom = viewState;
   viewState = name;
+  if (name === "home" && cameFrom !== "home" && typeof setMobileView === "function") setMobileView("hub");
   document.body.dataset.screen = name; // lets CSS adapt the layout per screen
   if (name !== "game") exitReview();
-  ["home", "room", "setup", "game", "replay", "learn", "account", "watch", "review", "puzzles", "puzzle", "coach"].forEach((s) =>
+  ["home", "room", "setup", "game", "replay", "learn", "account", "watch", "friends", "review", "puzzles", "puzzle", "coach"].forEach((s) =>
     el(`screen-${s}`).classList.toggle("hidden", s !== name)
   );
   const boardVisible =
@@ -1523,7 +1548,8 @@ function discardRoom() {
   room = null;
 }
 
-function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
+function startOnlineAsHost(customFen = null, { listInLobby = false, inviteTo = null } = {}) {
+  outgoingChallenge = inviteTo ? { id: "", uid: inviteTo.uid, name: inviteTo.name } : null;
   mode = "online";
   myColor = "w";
   customStartFen = customFen;
@@ -1557,6 +1583,20 @@ function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
     onOpen: () => {
       el("room-code").value = currentRoomCode;
       el("room-link").value = `${location.origin}${location.pathname}?join=${currentRoomCode}`;
+      if (inviteTo && outgoingChallenge && !outgoingChallenge.id && !outgoingChallenge.sending) {
+        // Tell the friend: their invite carries the room code, so they just tap Accept.
+        outgoingChallenge.sending = true;
+        el("room-sub").textContent = `Inviting ${inviteTo.name}… the game starts when they accept. You can also send the link or code.`;
+        sendChallenge({ toUid: inviteTo.uid, toName: inviteTo.name, timeControl: timeControlKey, roomCode: currentRoomCode }).then((id) => {
+          if (!outgoingChallenge || outgoingChallenge.uid !== inviteTo.uid) {
+            if (id) deleteChallenge(id); // we left the room while it was being sent
+            return;
+          }
+          outgoingChallenge.sending = false;
+          if (id) outgoingChallenge.id = id;
+          else el("conn-state").textContent = "Couldn't send the invite — send your friend the link or code instead.";
+        });
+      }
       if (listInLobby) {
         el("room-sub").textContent = "You're listed under Online → Open games. The game starts as soon as someone joins.";
         registerOpenGame(currentRoomCode, {
@@ -1573,6 +1613,7 @@ function startOnlineAsHost(customFen = null, { listInLobby = false } = {}) {
     },
     onConnected: () => {
       delistOpenGame(); // someone joined: it's no longer an open game
+      cancelOutgoingChallenge(); // they're here, so the invite has done its job
       const profile = getProfile();
       room.send({
         type: "init",
@@ -1666,6 +1707,7 @@ function startOnlineAsGuest(rawCode) {
     el("conn-state").textContent = message;
     el("conn-state").classList.add("error");
     retryBtn.classList.remove("hidden");
+    appendRelayReport(el("conn-state"));
   };
   clearTimeout(guestTimer);
   guestTimer = setTimeout(
@@ -1858,6 +1900,7 @@ function startSpectating(rawCode) {
       "Still can't connect. Check that the game is still going and that the host allows spectators. If you're on different networks (mobile data vs Wi-Fi), the connection may be blocked — try the same Wi-Fi.";
     el("conn-state").classList.add("error");
     retryBtn.classList.remove("hidden");
+    appendRelayReport(el("conn-state"));
   }, 15000);
 
   room = new Room({
@@ -2250,14 +2293,17 @@ el("chat-form").addEventListener("submit", (e) => {
 
 function setActiveChip(key) {
   timeControlKey = key;
-  document.querySelectorAll("#time-control .chip").forEach((c) => {
+  document.querySelectorAll("#time-control .chip, #time-sheet .chip").forEach((c) => {
     c.classList.toggle("active", c.dataset.tc === key);
   });
   updatePlaySummary();
 }
 
-document.querySelectorAll("#time-control .chip").forEach((c) => {
-  c.addEventListener("click", () => setActiveChip(c.dataset.tc));
+document.querySelectorAll("#time-control .chip, #time-sheet .chip").forEach((c) => {
+  c.addEventListener("click", () => {
+    setActiveChip(c.dataset.tc);
+    el("time-sheet").classList.add("hidden");
+  });
 });
 setActiveChip("untimed");
 
@@ -2633,6 +2679,10 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
       setNavActive("puzzles");
       showScreen("puzzles");
       puzzles.updateLeft();
+    } else if (btn.dataset.nav === "friends") {
+      setNavActive("friends");
+      showScreen("friends");
+      renderSocial();
     } else if (btn.dataset.nav === "watch") {
       setNavActive("watch");
       showScreen("watch");
@@ -2710,21 +2760,33 @@ function updatePlaySummary() {
   const tc = TIME_CONTROLS[timeControlKey]?.label || "Untimed";
   const colorLabel = botColorChoice === "w" ? "White" : botColorChoice === "b" ? "Black" : "Random";
   let text;
-  if (homeMode === "bot") text = `vs Computer · ${botElo} · ${colorLabel}`;
-  else if (homeMode === "local") text = `Local · ${tc}`;
+  if (homeMode === "bot") text = `Play Bots · ${botElo} · ${colorLabel}`;
+  else if (homeMode === "person") text = `Play in Person · ${tc}`;
+  else if (homeMode === "friend") text = `Play a Friend · ${tc}`;
   else text = isConfigured() ? `Online · ${tc}` : "Needs the shared database — see README";
   el("play-summary").textContent = text;
   el("btn-main-play").disabled = homeMode === "online" && !isConfigured();
-  el("btn-create").textContent = `Create a room for a friend · ${tc}`;
+  el("btn-create").textContent = `Play a Friend · ${tc}`;
+  updateNewGameSummary();
+}
+
+// Phone: the texts on the Home hub and the New Game screen.
+function updateNewGameSummary() {
+  const tc = TIME_CONTROLS[timeControlKey]?.label || "Untimed";
+  const colorLabel = botColorChoice === "w" ? "White" : botColorChoice === "b" ? "Black" : "Random";
+  el("m-time-label").textContent = tc;
+  el("m-bots-sub").textContent = `${botElo} · ${colorLabel}`;
+  el("m-start-sub").textContent = isConfigured() ? `Online · ${tc}` : `Play Bots · ${botElo} · ${colorLabel}`;
 }
 
 function setHomeMode(m) {
-  if (!["online", "bot", "local"].includes(m)) m = "bot";
+  if (!["online", "bot", "friend", "person"].includes(m)) m = "bot";
   homeMode = m;
   localStorage.setItem("oakwood.homeMode", m);
   document.querySelectorAll("#mode-switch button").forEach((b) => b.classList.toggle("active", b.dataset.mode === m));
   el("panel-bot").classList.toggle("hidden", m !== "bot");
-  el("panel-local").classList.toggle("hidden", m !== "local");
+  el("panel-friend").classList.toggle("hidden", m !== "friend");
+  el("panel-person").classList.toggle("hidden", m !== "person");
   el("panel-online").classList.toggle("hidden", m !== "online");
   el("tc-section").classList.toggle("hidden", m === "bot"); // time control is for local/online
   updatePlaySummary();
@@ -2740,11 +2802,72 @@ el("btn-main-play").addEventListener("click", () => {
   if (homeMode === "bot") {
     const color = botColorChoice === "random" ? (Math.random() < 0.5 ? "w" : "b") : botColorChoice;
     startBotGame(botElo, color);
-  } else if (homeMode === "local") {
+  } else if (homeMode === "person") {
     startLocal();
+  } else if (homeMode === "friend") {
+    el("btn-create").click();
   } else {
     quickPlay();
   }
+});
+
+// ---------- Phone: Home hub, New Game screen and the screens behind it ----------
+// (chess.com-style; the desktop layout above is unchanged.)
+
+const homeScreen = el("screen-home");
+const M_TITLES = { bots: "Play Bots", friend: "Play a Friend", person: "Play in Person", online: "Play Online" };
+let mStack = ["hub"];
+
+function setMobileView(v, { push = true } = {}) {
+  if (push) {
+    if (v === "hub") mStack = ["hub"];
+    else if (mStack[mStack.length - 1] !== v) mStack.push(v);
+  }
+  homeScreen.dataset.mview = v;
+  if (M_TITLES[v]) {
+    el("m-title").textContent = M_TITLES[v];
+    setHomeMode(v === "bots" ? "bot" : v);
+  }
+  // The Start button belongs to modes that start straight from their screen.
+  homeScreen.dataset.mstart = v === "bots" || v === "person" || v === "online" ? "1" : "0";
+  updateNewGameSummary();
+  window.scrollTo(0, 0);
+}
+
+// One step back inside the Play screens. Returns false if already at the hub.
+function mobileViewBack() {
+  if (mStack.length <= 1) return false;
+  mStack.pop();
+  setMobileView(mStack[mStack.length - 1], { push: false });
+  return true;
+}
+
+function startBotFromHome() {
+  const color = botColorChoice === "random" ? (Math.random() < 0.5 ? "w" : "b") : botColorChoice;
+  startBotGame(botElo, color);
+}
+
+document.querySelectorAll("[data-mgo]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const go = b.dataset.mgo;
+    if (go === "coach") el("btn-coach-home").click();
+    else setMobileView(go);
+  });
+});
+document.querySelectorAll("[data-mback]").forEach((b) => b.addEventListener("click", () => mobileViewBack()));
+el("m-play").addEventListener("click", () => setMobileView("new"));
+// "Start Game": find an opponent online when the shared database is set up, otherwise play a bot.
+el("btn-newgame-start").addEventListener("click", () => {
+  if (isConfigured()) quickPlay();
+  else startBotFromHome();
+});
+el("btn-m-start").addEventListener("click", () => el("btn-main-play").click());
+
+// The Time sheet.
+el("btn-time-open").addEventListener("click", () => el("time-sheet").classList.remove("hidden"));
+el("btn-time-close").addEventListener("click", () => el("time-sheet").classList.add("hidden"));
+el("time-sheet").addEventListener("click", (e) => {
+  if (e.target === el("time-sheet")) el("time-sheet").classList.add("hidden");
 });
 
 // ---------- Online lobby (needs Firebase) ----------
@@ -2788,7 +2911,7 @@ async function renderOpenGames() {
   list.innerHTML = "";
   if (!isConfigured()) {
     note.textContent =
-      "Playing other people online needs the shared database (Firebase) — see the README. You can still play a friend with a room code under Local / Friend.";
+      "Playing other people online needs the shared database (Firebase) — see the README. You can still play a friend with a room code under Play a Friend.";
     return;
   }
   note.textContent = "Press Play to join the longest-waiting game for your time control, or to open one and wait. You can also pick a game below.";
@@ -2874,7 +2997,7 @@ function renderHistoryList() {
     resultSpan.textContent = entry.result;
     const metaSpan = document.createElement("span");
     metaSpan.className = "h-meta";
-    const modeLabel = entry.mode === "online" ? "Online" : "Local";
+    const modeLabel = entry.mode === "online" ? "Online" : "In person";
     const ratingText = entry.rating ? ` · ${entry.rating.before}→${entry.rating.after}` : "";
     metaSpan.textContent = `${modeLabel} · ${formatDate(entry.playedAt)} · ${entry.plyCount} ply${ratingText}`;
     btn.appendChild(resultSpan);
@@ -2904,7 +3027,7 @@ function openReplay(entry) {
   replayFens = fens;
   replayIndex = fens.length - 1;
   replayGame.load(fens[replayIndex]);
-  const modeLabel = entry.mode === "online" ? "Online" : "Local";
+  const modeLabel = entry.mode === "online" ? "Online" : "In person";
   el("replay-summary").textContent = `${entry.result} — ${modeLabel} · ${formatDate(entry.playedAt)}`;
   showScreen("replay");
   render();
@@ -2994,6 +3117,11 @@ window.addEventListener("popstate", () => {
   if (!guardActive) {
     if (homeGuardActive && viewState === "home") {
       homeGuardActive = false; // the browser just removed it
+      if (mobileViewBack()) {
+        // Back inside the phone's Play screens just goes up one level.
+        ensureHomeGuard();
+        return;
+      }
       showExitModal(true);
       ensureHomeGuard();
     }
@@ -3020,6 +3148,7 @@ function leaveToHome() {
   delistOpenGame();
   hostWantsSpectators = false;
   currentWatchCode = "";
+  cancelOutgoingChallenge();
   exitReview();
   stopExtras();
   mode = null;
@@ -3238,6 +3367,316 @@ el("watch-chip").addEventListener("click", async () => {
   const label = el("watch-chip").querySelector(".watch-chip-label");
   await copyWatchLink(label, "Watch");
 });
+
+
+// ---------- Friends and challenges (need the shared database) ----------
+
+let social = null; // the latest { friends, requestsIn, requestsOut, challengesIn, challengesOut }
+let socialUnsub = null;
+let socialUid = "";
+let friendCards = {}; // uid -> public card (rating)
+let cardsLoading = new Set();
+let outgoingChallenge = null; // the invite we sent for the room we're hosting
+let popupChallenge = null;
+const seenInvites = new Set();
+
+function mk(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+const AVATAR_COLOURS = ["#477747", "#3B6B7D", "#8A6A12", "#A4472F", "#5C6B1E", "#7A5A32", "#4A5D4A"];
+function avatar(name, large = false) {
+  const a = mk("div", "fr-avatar" + (large ? " fr-avatar-lg" : ""), (name || "?").trim().slice(0, 1).toUpperCase());
+  let n = 0;
+  for (const ch of name || "") n = (n * 31 + ch.charCodeAt(0)) >>> 0;
+  a.style.background = AVATAR_COLOURS[n % AVATAR_COLOURS.length];
+  return a;
+}
+
+function tcText(key) {
+  return TIME_CONTROLS[key]?.label || "Untimed";
+}
+
+function cancelOutgoingChallenge() {
+  const c = outgoingChallenge;
+  outgoingChallenge = null;
+  if (c && c.id) deleteChallenge(c.id);
+}
+
+function inviteFriend(f) {
+  if (!isConfigured()) return;
+  setHomeMode("friend");
+  startOnlineAsHost(null, { inviteTo: f });
+}
+
+function loadFriendCards() {
+  if (!social) return;
+  const missing = social.friends.map((f) => f.uid).filter((u) => !(u in friendCards) && !cardsLoading.has(u));
+  if (!missing.length) return;
+  missing.forEach((u) => cardsLoading.add(u));
+  fetchPlayerCards(missing).then((cards) => {
+    for (const u of missing) {
+      cardsLoading.delete(u);
+      friendCards[u] = cards[u] || {};
+    }
+    renderSocial();
+  });
+}
+
+function friendRow(f, { remove = false } = {}) {
+  const row = mk("div", "fr-row");
+  const info = mk("div", "fr-info");
+  info.append(mk("b", "fr-name", f.name));
+  const rating = friendCards[f.uid]?.rating;
+  if (rating != null) info.append(mk("small", "muted", `Rating ${Math.round(rating)}`));
+  const actions = mk("div", "fr-actions");
+  const inv = mk("button", "btn btn-primary btn-small", "Invite");
+  inv.type = "button";
+  inv.onclick = () => inviteFriend(f);
+  actions.append(inv);
+  if (remove) {
+    const rm = mk("button", "btn btn-ghost btn-small", "Remove");
+    rm.type = "button";
+    rm.onclick = () => {
+      if (confirm(`Remove ${f.name} from your friends?`)) removeFriendLink(f.id);
+    };
+    actions.append(rm);
+  }
+  row.append(avatar(f.name), info, actions);
+  return row;
+}
+
+function emptyLine(text) {
+  return mk("p", "muted fr-empty", text);
+}
+
+function goToFriendsTab() {
+  document.querySelector('.nav-btn[data-nav="friends"]').click();
+}
+
+function renderSocial() {
+  const configured = isConfigured();
+  const hasName = !!getProfile().name;
+  const note = el("fr-note");
+  if (!configured) {
+    note.textContent = "Friends and invites need the shared database (Firebase). See the README to switch it on.";
+  } else if (!hasName) {
+    note.textContent = "Choose a username in Account first. Friends find you by it.";
+  }
+  note.classList.toggle("hidden", configured && hasName);
+  el("fr-pane-friends").classList.toggle("fr-off", !configured);
+  el("fr-pane-challenges").classList.toggle("fr-off", !configured);
+  el("fr-tc").textContent = tcText(timeControlKey);
+
+  const s = social || { friends: [], requestsIn: [], requestsOut: [], challengesIn: [], challengesOut: [] };
+
+  // badges: invites + friend requests waiting for you
+  const waiting = s.challengesIn.length + s.requestsIn.length;
+  document.querySelectorAll("[data-nav-badge]").forEach((b) => {
+    b.textContent = waiting > 9 ? "9+" : String(waiting);
+    b.classList.toggle("hidden", waiting === 0);
+  });
+  el("fr-badge").textContent = String(s.challengesIn.length);
+  el("fr-badge").classList.toggle("hidden", s.challengesIn.length === 0);
+
+  // your friends
+  const list = el("fr-list");
+  list.replaceChildren();
+  if (s.friends.length) s.friends.forEach((f) => list.append(friendRow(f, { remove: true })));
+  else list.append(emptyLine("No friends yet. Add someone by their username above."));
+
+  // friend requests
+  const reqs = el("fr-requests-list");
+  reqs.replaceChildren();
+  for (const r of s.requestsIn) {
+    const row = mk("div", "fr-row");
+    const info = mk("div", "fr-info");
+    info.append(mk("b", "fr-name", r.fromName), mk("small", "muted", "wants to be your friend"));
+    const acts = mk("div", "fr-actions");
+    const yes = mk("button", "btn btn-primary btn-small", "Accept");
+    yes.onclick = () => answerFriendRequest(r.id, true);
+    const no = mk("button", "btn btn-ghost btn-small", "Decline");
+    no.onclick = () => answerFriendRequest(r.id, false);
+    acts.append(yes, no);
+    row.append(avatar(r.fromName), info, acts);
+    reqs.append(row);
+  }
+  for (const r of s.requestsOut) {
+    const row = mk("div", "fr-row");
+    const info = mk("div", "fr-info");
+    info.append(mk("b", "fr-name", r.toName), mk("small", "muted", "request sent — waiting"));
+    const acts = mk("div", "fr-actions");
+    const x = mk("button", "btn btn-ghost btn-small", "Cancel");
+    x.onclick = () => removeFriendLink(r.id);
+    acts.append(x);
+    row.append(avatar(r.toName), info, acts);
+    reqs.append(row);
+  }
+  el("fr-requests").classList.toggle("hidden", !s.requestsIn.length && !s.requestsOut.length);
+
+  // challenges
+  const cin = el("ch-in-list");
+  cin.replaceChildren();
+  if (!s.challengesIn.length) cin.append(emptyLine("No invites right now. When a friend invites you to a game, it shows up here."));
+  for (const c of s.challengesIn) {
+    const row = mk("div", "fr-row");
+    const info = mk("div", "fr-info");
+    info.append(mk("b", "fr-name", c.fromName), mk("small", "muted", `invites you to play · ${tcText(c.timeControl)}`));
+    const acts = mk("div", "fr-actions");
+    const yes = mk("button", "btn btn-primary btn-small", "Accept");
+    yes.onclick = () => acceptChallenge(c);
+    const no = mk("button", "btn btn-ghost btn-small", "Decline");
+    no.onclick = () => answerChallenge(c.id, "declined");
+    acts.append(yes, no);
+    row.append(avatar(c.fromName), info, acts);
+    cin.append(row);
+  }
+  const cout = el("ch-out-list");
+  cout.replaceChildren();
+  if (!s.challengesOut.length) cout.append(emptyLine("You haven't invited anyone. Pick a friend and tap Invite."));
+  for (const c of s.challengesOut) {
+    const row = mk("div", "fr-row");
+    const info = mk("div", "fr-info");
+    info.append(mk("b", "fr-name", c.toName), mk("small", "muted", `waiting for an answer · ${tcText(c.timeControl)}`));
+    const acts = mk("div", "fr-actions");
+    const x = mk("button", "btn btn-ghost btn-small", "Cancel");
+    x.onclick = () => {
+      deleteChallenge(c.id);
+      if (outgoingChallenge && outgoingChallenge.id === c.id) leaveToHome();
+    };
+    acts.append(x);
+    row.append(avatar(c.toName), info, acts);
+    cout.append(row);
+  }
+
+  // Play a Friend: invite from your list
+  const pf = el("pf-friends");
+  const pfList = el("pf-friends-list");
+  pfList.replaceChildren();
+  pf.classList.toggle("hidden", !(configured && s.friends.length));
+  s.friends.forEach((f) => pfList.append(friendRow(f)));
+
+  // the phone Home hub
+  const hubBox = el("m-friends");
+  hubBox.replaceChildren();
+  hubBox.classList.toggle("hidden", !configured);
+  if (configured) {
+    const head = mk("div", "m-block-head");
+    head.append(mk("h3", null, "Friends"));
+    const all = mk("button", "m-link", s.friends.length ? "View all" : "Add friends");
+    all.type = "button";
+    all.onclick = goToFriendsTab;
+    head.append(all);
+    hubBox.append(head);
+    if (s.friends.length) {
+      const row = mk("div", "m-friend-row");
+      s.friends.slice(0, 12).forEach((f) => {
+        const b = mk("button", "m-friend");
+        b.type = "button";
+        b.append(avatar(f.name, true), mk("span", null, f.name));
+        b.onclick = () => setMobileView("friend");
+        row.append(b);
+      });
+      hubBox.append(row);
+    } else {
+      hubBox.append(emptyLine("Add friends to invite them to a game."));
+    }
+  }
+}
+
+// ---- the invite popup ----
+
+function showChallengePopup(c) {
+  popupChallenge = c;
+  el("ch-pop-title").textContent = `${c.fromName} invited you to play`;
+  el("ch-pop-sub").textContent = `${tcText(c.timeControl)} game`;
+  el("ch-pop-avatar").replaceChildren(...avatar(c.fromName, true).childNodes);
+  el("ch-pop-avatar").style.background = avatar(c.fromName).style.background;
+  el("challenge-modal").classList.remove("hidden");
+}
+
+function hideChallengePopup() {
+  popupChallenge = null;
+  el("challenge-modal").classList.add("hidden");
+}
+
+async function acceptChallenge(c) {
+  hideChallengePopup();
+  await answerChallenge(c.id, "accepted");
+  setNavActive("home");
+  startOnlineAsGuest(c.roomCode);
+}
+
+el("btn-ch-accept").addEventListener("click", () => {
+  if (popupChallenge) acceptChallenge(popupChallenge);
+});
+el("btn-ch-decline").addEventListener("click", () => {
+  if (popupChallenge) answerChallenge(popupChallenge.id, "declined");
+  hideChallengePopup();
+});
+
+function onSocial(data) {
+  social = data;
+  if (!data) return renderSocial();
+  loadFriendCards();
+  renderSocial();
+  // the friend we invited said no
+  if (outgoingChallenge && outgoingChallenge.id && viewState === "room") {
+    const mine = (data.challengesOutAll || []).find((c) => c.id === outgoingChallenge.id);
+    if (mine && mine.status === "declined") {
+      el("conn-state").textContent = `${outgoingChallenge.name} declined the invite. The room is still open — send them the link, or go back.`;
+    }
+  }
+  // a new invite: pop up unless you're in the middle of something
+  const busy = ["game", "room", "coach", "review", "puzzle"].includes(viewState);
+  for (const c of data.challengesIn) {
+    if (seenInvites.has(c.id)) continue;
+    seenInvites.add(c.id);
+    if (!busy && !popupChallenge) showChallengePopup(c);
+  }
+  if (popupChallenge && !data.challengesIn.some((c) => c.id === popupChallenge.id)) hideChallengePopup();
+}
+
+onAuthChange((user) => {
+  if (!user || user.uid === socialUid) return;
+  if (socialUnsub) socialUnsub();
+  socialUid = user.uid;
+  seenInvites.clear();
+  social = null;
+  friendCards = {};
+  socialUnsub = watchSocial(onSocial);
+});
+
+// the Friends tab itself
+document.querySelectorAll("[data-ftab]").forEach((b) => {
+  b.addEventListener("click", () => {
+    const which = b.dataset.ftab;
+    document.querySelectorAll("[data-ftab]").forEach((x) => x.classList.toggle("active", x === b));
+    el("fr-pane-friends").classList.toggle("hidden", which !== "friends");
+    el("fr-pane-challenges").classList.toggle("hidden", which !== "challenges");
+  });
+});
+async function addFriendFromInput() {
+  const msg = el("fr-add-msg");
+  const r = await sendFriendRequest(el("fr-add-input").value);
+  msg.textContent = r.ok
+    ? r.became === "friends"
+      ? `You and ${r.name} are now friends.`
+      : `Request sent to ${r.name}. They need to accept it.`
+    : r.error;
+  msg.classList.toggle("warn", !r.ok);
+  msg.classList.remove("hidden");
+  if (r.ok) el("fr-add-input").value = "";
+}
+el("btn-fr-add").addEventListener("click", addFriendFromInput);
+el("fr-add-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") addFriendFromInput();
+});
+
+renderSocial(); // right away: badges and the "needs the database" note, before any data arrives
 
 el("btn-stop-spectators").addEventListener("click", () => {
   if (!room || !room.isHost) return;

@@ -28,6 +28,43 @@ const ICE_CONFIG = {
   ],
 };
 
+// A quick check, run after a connection fails: can THIS phone reach a relay
+// (TURN) server at all? A relay is what carries the game when two phones on
+// different networks can't connect directly. Resolves to { relay, total }:
+// how many relay / all connection candidates were found (relay 0 = no relay
+// server could be reached, so connections across networks are likely to fail).
+export function checkRelayAvailable(timeoutMs = 6000) {
+  return new Promise((resolve) => {
+    let pc = null;
+    let finished = false;
+    let relay = 0;
+    let total = 0;
+    const finish = (error = false) => {
+      if (finished) return;
+      finished = true;
+      try {
+        pc && pc.close();
+      } catch {
+        /* already closed */
+      }
+      resolve({ relay, total, error });
+    };
+    try {
+      pc = new RTCPeerConnection({ iceServers: ICE_CONFIG.iceServers });
+      pc.createDataChannel("probe");
+      pc.onicecandidate = (e) => {
+        if (!e.candidate) return finish();
+        total += 1;
+        if (/ typ relay /.test(e.candidate.candidate)) relay += 1;
+      };
+      pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(() => finish(true));
+      setTimeout(finish, timeoutMs);
+    } catch {
+      finish(true);
+    }
+  });
+}
+
 // The only messages a spectator may send: one of these reaction emojis.
 const SPECTATOR_EMOJIS = ["👏", "🔥", "👑", "😱"];
 

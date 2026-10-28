@@ -206,6 +206,9 @@
       <button class="nav-btn side-nav-btn" data-nav="puzzles">
         <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg></span><span>Puzzles</span>
       </button>
+      <button class="nav-btn side-nav-btn" data-nav="friends">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0c-.3 0-.6 0-1 .1 1.2.8 2 1.9 2 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z"/></svg><span class="nav-badge hidden" data-nav-badge></span></span><span>Friends</span>
+      </button>
       <button class="nav-btn side-nav-btn" data-nav="watch">
         <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 4H5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h3l-1 2h10l-1-2h3a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3zM10 15V8l6 3.5-6 3.5z"/></svg></span><span>Watch</span>
       </button>
@@ -270,7 +273,58 @@
       <aside class="panel">
 
         <!-- HOME -->
-        <div id="screen-home" class="screen">
+        <div id="screen-home" class="screen" data-mview="hub">
+
+          <!-- ===== Phone only: the chess.com-style Home hub, New Game screen and sub-screens ===== -->
+          <div id="m-hub" class="m-only">
+            <header class="m-top"><img class="m-logo" src="assets/oakwood-logo.png" alt="" /><span class="m-brand">Oakwood Chess</span></header>
+            <div class="m-shortcuts">
+              <button type="button" class="m-short" data-mgo="bots">
+                <span class="m-short-ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a1.5 1.5 0 0 1 .75 2.8V6H17a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3h4.25V4.8A1.5 1.5 0 0 1 12 2zM8.5 11a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zM9 16.5h6" fill="currentColor"/></svg></span>
+                <b>Play Bots</b><small id="m-bots-sub">1000 · White</small>
+              </button>
+              <button type="button" class="m-short" data-mgo="coach">
+                <img class="m-short-face" src="icons/coach_neutral.png" alt="" onerror="this.remove()" />
+                <b>Play Coach</b><small>Live tips</small>
+              </button>
+            </div>
+            <section id="m-friends" class="m-block hidden"></section>
+            <button id="m-play" type="button" class="m-play">Play</button>
+          </div>
+
+          <div id="m-new" class="m-only">
+            <div class="m-newhead"><button type="button" class="m-back" data-mback aria-label="Back">&#8249;</button><h2>New Game</h2></div>
+            <button id="btn-time-open" type="button" class="m-time" aria-haspopup="dialog">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v11h3v9l7-12h-4l4-8z" fill="currentColor"/></svg>
+              <span id="m-time-label">Untimed</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="m-chev"><path d="M7 10l5 5 5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button id="btn-newgame-start" type="button" class="m-start"><span>Start Game</span><small id="m-start-sub"></small></button>
+            <div class="m-list">
+              <button type="button" class="m-row" data-mgo="friend"><span class="m-row-ic" style="--tile-bg:#E3EDD3;--tile-fg:#477747"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0c-.3 0-.6 0-1 .1 1.2.8 2 1.9 2 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z" fill="currentColor"/></svg></span><span class="m-row-t">Play a Friend</span><span class="m-row-go">&#8250;</span></button>
+              <button type="button" class="m-row" data-mgo="bots"><span class="m-row-ic" style="--tile-bg:#DCE8EC;--tile-fg:#3B6B7D"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a1.5 1.5 0 0 1 .75 2.8V6H17a3 3 0 0 1 3 3v8a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3h4.25V4.8A1.5 1.5 0 0 1 12 2zM8.5 11a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm7 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z" fill="currentColor"/></svg></span><span class="m-row-t">Play Bots</span><span class="m-row-go">&#8250;</span></button>
+              <button type="button" class="m-row" data-mgo="coach"><span class="m-row-ic" style="--tile-bg:#F5EBCB;--tile-fg:#8A6A12"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 1 9l11 6 9-4.9V17h2V9L12 3zM5 13.2V17c0 1.7 3.1 3 7 3s7-1.3 7-3v-3.8l-7 3.8-7-3.8z" fill="currentColor"/></svg></span><span class="m-row-t">Play Coach</span><span class="m-row-go">&#8250;</span></button>
+              <button type="button" class="m-row" data-mgo="person"><span class="m-row-ic" style="--tile-bg:#F3DDD3;--tile-fg:#A4472F"><svg viewBox="0 0 40 40" aria-hidden="true" class="m-pawn"><use href="#wp"/></svg></span><span class="m-row-t">Play in Person</span><span class="m-row-go">&#8250;</span></button>
+              <button type="button" class="m-row" data-mgo="online"><span class="m-row-ic" style="--tile-bg:#E6EBD0;--tile-fg:#5C6B1E"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="currentColor"/></svg></span><span class="m-row-t">Play Online</span><span class="m-row-go">&#8250;</span></button>
+            </div>
+          </div>
+
+          <div id="m-subhead" class="m-only m-subhead"><button type="button" class="m-back" data-mback aria-label="Back">&#8249;</button><h2 id="m-title"></h2></div>
+          <div id="m-substart" class="m-only"><button id="btn-m-start" type="button" class="m-start"><span>Start</span></button></div>
+
+          <div id="time-sheet" class="sheet hidden" role="dialog" aria-label="Time control">
+            <div class="sheet-card">
+              <header class="sheet-head"><h3>Time</h3><button type="button" id="btn-time-close" class="sheet-x" aria-label="Close">&#10005;</button></header>
+              <p class="sheet-group">Untimed</p>
+              <div class="sheet-grid"><button class="chip" data-tc="untimed">Untimed</button></div>
+              <p class="sheet-group">Bullet</p>
+              <div class="sheet-grid"><button class="chip" data-tc="m1">1 min</button></div>
+              <p class="sheet-group">Blitz</p>
+              <div class="sheet-grid"><button class="chip" data-tc="b3">3 min</button><button class="chip" data-tc="b3i2">3 | 2</button><button class="chip" data-tc="b5">5 min</button><button class="chip" data-tc="b5i3">5 | 3</button></div>
+              <p class="sheet-group">Rapid</p>
+              <div class="sheet-grid"><button class="chip" data-tc="b10">10 min</button><button class="chip" data-tc="b15i10">15 | 10</button><button class="chip" data-tc="b30">30 min</button></div>
+            </div>
+          </div>
 
           <section class="home-hero">
             <img src="assets/chess-decoration.png" alt="" class="chess-decoration" aria-hidden="true" />
@@ -283,7 +337,7 @@
                    and says what it's about to start. -->
               <button id="btn-main-play" class="btn btn-primary btn-play-main">
             <span class="play-title">Play</span>
-            <span id="play-summary" class="play-summary">vs Computer · 1000 · White</span>
+            <span id="play-summary" class="play-summary">Play Bots · 1000 · White</span>
           </button>
             </div>
           </section>
@@ -300,11 +354,12 @@
           <div class="home-col home-col-play">
           <div id="mode-switch" class="segmented" role="tablist" aria-label="Game mode">
             <button data-mode="online" role="tab">Online</button>
-            <button data-mode="bot" role="tab">vs Computer</button>
-            <button data-mode="local" role="tab">Local / Friend</button>
+            <button data-mode="bot" role="tab">Play Bots</button>
+            <button data-mode="friend" role="tab">Play a Friend</button>
+            <button data-mode="person" role="tab">Play in Person</button>
           </div>
 
-          <!-- Shared by Online and Local / Friend -->
+          <!-- Shared by Online, Play a Friend and Play in Person -->
           <div id="tc-section" class="card mode-card hidden">
             <p class="field-label">Time control</p>
             <div id="time-control" class="chip-row" role="radiogroup" aria-label="Time control">
@@ -332,10 +387,9 @@
             </div>
           </div>
 
-          <div id="panel-local" class="card mode-card hidden">
-            <p class="muted" style="margin:0 0 4px;">Press <b>Play</b> to play on this device — one board, two players.</p>
-            <p class="field-label">Play a friend online</p>
-            <button id="btn-create" class="btn btn-ghost">Create a room for a friend</button>
+          <div id="panel-friend" class="card mode-card hidden">
+            <p class="muted" style="margin:0 0 8px;">Opens a private room. Send your friend the link or the code, or invite a friend from your list.</p>
+            <button id="btn-create" class="btn btn-ghost">Play a Friend</button>
             <label class="checkbox-row">
               <input type="checkbox" id="custom-position-toggle" />
               <span>Set up a custom position first (remove pieces)</span>
@@ -357,6 +411,14 @@
               <button id="btn-join-code" class="btn btn-primary btn-small">Join</button>
             </div>
             <p id="join-error" class="conn-state error hidden"></p>
+            <div id="pf-friends" class="pf-friends hidden">
+              <p class="field-label">Invite a friend</p>
+              <div id="pf-friends-list" class="fr-list"></div>
+            </div>
+          </div>
+
+          <div id="panel-person" class="card mode-card hidden">
+            <p class="muted" style="margin:0;">Two players, one device: take turns moving on the same board. The time control above is used for the clocks.</p>
           </div>
 
           <div id="panel-online" class="card mode-card hidden">
@@ -758,6 +820,47 @@
         </div>
 
         <!-- ACCOUNT -->
+        <div id="screen-friends" class="screen hidden">
+          <div class="segmented fr-tabs" role="tablist" aria-label="Friends">
+            <button type="button" role="tab" data-ftab="friends" class="active">Friends</button>
+            <button type="button" role="tab" data-ftab="challenges">Challenges <span id="fr-badge" class="badge hidden"></span></button>
+          </div>
+
+          <div id="fr-note" class="card card-wide hidden"></div>
+
+          <div id="fr-pane-friends" class="fr-pane">
+            <div class="card card-wide">
+              <h2>Add a friend</h2>
+              <p class="muted">Type their Oakwood username. They'll get a request to accept.</p>
+              <div class="link-row">
+                <input id="fr-add-input" type="text" maxlength="24" placeholder="Their username" class="text-input" autocapitalize="off" autocomplete="off" />
+                <button id="btn-fr-add" class="btn btn-primary btn-small">Add</button>
+              </div>
+              <p id="fr-add-msg" class="muted hidden"></p>
+            </div>
+            <div id="fr-requests" class="card card-wide hidden">
+              <h2>Friend requests</h2>
+              <div id="fr-requests-list" class="fr-list"></div>
+            </div>
+            <div class="card card-wide">
+              <h2>Your friends</h2>
+              <p class="muted fr-tcline">Invites use the time control picked on Home: <b id="fr-tc">Untimed</b>.</p>
+              <div id="fr-list" class="fr-list"></div>
+            </div>
+          </div>
+
+          <div id="fr-pane-challenges" class="fr-pane hidden">
+            <div class="card card-wide">
+              <h2>Invited to play</h2>
+              <div id="ch-in-list" class="fr-list"></div>
+            </div>
+            <div class="card card-wide">
+              <h2>Invites you sent</h2>
+              <div id="ch-out-list" class="fr-list"></div>
+            </div>
+          </div>
+        </div>
+
         <div id="screen-account" class="screen hidden">
           <div class="card">
             <h2>Your rating</h2>
@@ -860,6 +963,19 @@
           </div>
         </div>
 
+        <div id="challenge-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="ch-pop-title">
+          <div class="modal-card ch-pop">
+            <div id="ch-pop-avatar" class="fr-avatar fr-avatar-lg"></div>
+            <p class="ch-pop-kicker">Game invite</p>
+            <h3 id="ch-pop-title"></h3>
+            <p id="ch-pop-sub" class="muted"></p>
+            <div class="ch-pop-actions">
+              <button id="btn-ch-accept" class="btn btn-primary">Accept</button>
+              <button id="btn-ch-decline" class="btn btn-ghost">Decline</button>
+            </div>
+          </div>
+        </div>
+
         <div id="exit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="exit-title">
           <div class="modal-card">
             <h3 id="exit-title">Exit Oakwood Chess?</h3>
@@ -907,6 +1023,9 @@
       </button>
       <button class="nav-btn" data-nav="puzzles">
         <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg></span><span>Puzzles</span>
+      </button>
+      <button class="nav-btn" data-nav="friends">
+        <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0c-.3 0-.6 0-1 .1 1.2.8 2 1.9 2 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z"/></svg><span class="nav-badge hidden" data-nav-badge></span></span><span>Friends</span>
       </button>
       <button class="nav-btn" data-nav="watch">
         <span class="nav-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 4H5a3 3 0 0 0-3 3v9a3 3 0 0 0 3 3h3l-1 2h10l-1-2h3a3 3 0 0 0 3-3V7a3 3 0 0 0-3-3zM10 15V8l6 3.5-6 3.5z"/></svg></span><span>Watch</span>
