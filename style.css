@@ -1738,3 +1738,13 @@ body[data-screen="game"] .watch-chip.on { display: flex; }
 body[data-screen="friends"] .titlebar { display: none; }
 @media (min-width: 900px) { .panel:has(#screen-friends:not(.hidden)) { width: min(720px, 100%); } }
 #conn-state { white-space: pre-line; }
+
+/* "Connection lost" banner: shown on both phones while an online game's connection is down */
+.conn-banner {
+  position: fixed; z-index: 80; left: 10px; right: 10px; top: calc(8px + env(safe-area-inset-top, 0px)); max-width: 520px; margin: 0 auto;
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 0.88rem; line-height: 1.35; font-weight: 600;
+  background: #FFF3CD; color: #6B4E00; border: 1px solid #E8C768; border-radius: 12px; box-shadow: 0 6px 18px rgba(36, 51, 38, 0.25);
+}
+.conn-banner.hidden { display: none; }
+.conn-banner span { flex: 1; }
+.conn-banner .btn { flex: 0 0 auto; background: #fff; }

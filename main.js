@@ -1365,7 +1365,7 @@ function applyMove({ from, to, promotion }) {
   lastMove = { from, to };
   playMoveSound(move);
   if (clock) clock.switchTo(game.turn());
-  if (mode === "online") room.send({ type: "move", from, to, promotion, remaining: clock && clock.enabled ? clock.snapshot() : undefined });
+  if (mode === "online") room.send({ type: "move", from, to, promotion, ply: game.history().length, remaining: clock && clock.enabled ? clock.snapshot() : undefined });
   if (mode === "local") saveLocalProgress();
   if (mode === "bot") {
     if (coachMode) coachGame.onPlayerMove();
@@ -1625,10 +1625,11 @@ function startOnlineAsHost(customFen = null, { listInLobby = false, inviteTo = n
       beginOnlineGame();
     },
     onData: handlePeerData,
+    onResumed: () => onConnectionResumed(),
     onPeerLeft: () => {
-      statusEl.textContent = "Your friend disconnected.";
-      if (clock) clock.stop();
-      delistLiveGame();
+      // Their connection closed. They may be coming back: the monitor shows a banner
+      // and the game waits (a deliberate "I'm leaving" arrives as a separate message).
+      if (!peerLeftForGood) setConnLost(true);
     },
     onSpectatorCountChange: (n) => {
       el("watchers-count").textContent = n;
@@ -1751,12 +1752,12 @@ function startOnlineAsGuest(rawCode) {
       }
       handlePeerData(data);
     },
+    onResumed: () => onConnectionResumed(),
     onPeerLeft: () => {
-      statusEl.textContent = "Your friend disconnected.";
-      if (clock) clock.stop();
+      if (!peerLeftForGood) setConnLost(true); // this phone redials by itself
     },
     onError: (err) => {
-      if (guestConnected && viewState !== "room") return; // mid-game: the "friend left" message covers it
+      if (guestConnected && viewState !== "room") return; // mid-game: the connection banner covers it
       guestFailed(describeConnError(err));
       if (guestConnected) {
         el("conn-state").textContent = describeConnError(err);
@@ -2037,6 +2038,7 @@ function handleSpectatorData(data) {
 }
 
 function beginOnlineGame() {
+  startConnMonitor();
   // The host opens spectator access only now that the game exists (never before).
   if (room && room.isHost && hostWantsSpectators && !room.watchOpen) startWatchRoom();
   clock = new Clock(timeControlKey, onClockTick, onClockFlag);
@@ -2054,10 +2056,144 @@ function beginOnlineGame() {
   render();
 }
 
+
+// ---------- Keeping an online game in step — and saying so when it isn't ----------
+//
+// Every few seconds each phone pings the other with how many moves it has. A
+// missing move is caught by the next ping, a connection that has gone quiet shows
+// a banner on BOTH phones, and the joining phone redials the host on a fresh
+// connection (the host keeps its seat for them, so the game carries on).
+
+let connLost = false;
+let lostSince = 0;
+let peerLeftForGood = false;
+let connTimer = 0;
+let connTick = 0;
+let lastRedialAt = 0;
+let lastSyncAt = 0;
+let lastStateAt = 0;
+const CONN_QUIET_MS = 9000; // this long with nothing heard = the connection has a problem
+
+function requestSync() {
+  if (!room || Date.now() - lastSyncAt < 1500) return;
+  lastSyncAt = Date.now();
+  room.send({ type: "sync-request" });
+}
+
+function sendState(force = false) {
+  if (!room || (!force && Date.now() - lastStateAt < 1200)) return;
+  lastStateAt = Date.now();
+  room.send({ type: "state", moves: game.history() });
+}
+
+// They sent their whole move list: play any moves we are missing, in order.
+function catchUpFrom(theirs) {
+  if (!Array.isArray(theirs)) return;
+  const mine = game.history();
+  const sharesStart = (a, b) => a.every((m, i) => m === b[i]);
+  if (theirs.length > mine.length && sharesStart(mine, theirs)) {
+    let last = null;
+    for (const san of theirs.slice(mine.length)) {
+      last = game.move(san);
+      if (!last) break;
+    }
+    if (last) {
+      exitReview();
+      lastMove = { from: last.from, to: last.to };
+      playMoveSound(last);
+      if (clock) clock.switchTo(game.turn());
+      render();
+    }
+  } else if (theirs.length < mine.length && sharesStart(theirs, mine)) {
+    sendState(); // they are behind us: bring them up to date
+  }
+}
+
+function setConnLost(lost) {
+  if (lost && !connLost) lostSince = Date.now();
+  connLost = lost;
+  updateConnBanner();
+}
+
+function updateConnBanner() {
+  const banner = el("conn-banner");
+  if (!connLost || gameRecorded || peerLeftForGood || mode !== "online" || !room) {
+    banner.classList.add("hidden");
+    return;
+  }
+  const who = opponentName || "your friend";
+  const secs = Math.round((Date.now() - lostSince) / 1000);
+  let text = room.isHost
+    ? `Lost connection to ${who} (${secs}s). Waiting for them to reconnect — your moves are kept.`
+    : `Lost connection to ${who} (${secs}s). Reconnecting… your moves are kept.`;
+  if (secs > 40) text += " Check that both phones have internet.";
+  el("conn-banner-text").textContent = text;
+  el("btn-conn-retry").classList.toggle("hidden", room.isHost);
+  banner.classList.remove("hidden");
+}
+
+function connMonitorTick() {
+  if (mode !== "online" || !room || !room.conn || gameRecorded) {
+    if (connLost) setConnLost(false);
+    return;
+  }
+  connTick += 1;
+  if (connTick % 3 === 0) room.send({ type: "ping", ply: game.history().length });
+  const quiet = room.silentFor() > CONN_QUIET_MS;
+  if (quiet !== connLost) setConnLost(quiet);
+  else if (quiet) updateConnBanner();
+  // The joining phone keeps trying to get back in, every few seconds.
+  if (quiet && !room.isHost && Date.now() - lastRedialAt > 7000) {
+    lastRedialAt = Date.now();
+    room.redial();
+  }
+}
+
+function startConnMonitor() {
+  clearInterval(connTimer);
+  connLost = false;
+  peerLeftForGood = false;
+  connTick = 0;
+  lastRedialAt = 0;
+  if (room) room.touch();
+  updateConnBanner();
+  connTimer = setInterval(connMonitorTick, 1000);
+}
+
+function stopConnMonitor() {
+  clearInterval(connTimer);
+  connLost = false;
+  updateConnBanner();
+}
+
+// The connection came back (our new one, or theirs): say so and compare notes.
+function onConnectionResumed() {
+  setConnLost(false);
+  sendState(true);
+  if (clock && clock.enabled && !gameRecorded) room.send(ownClockReport());
+}
+
+el("btn-conn-retry").addEventListener("click", () => {
+  lastRedialAt = Date.now();
+  if (room) room.redial();
+});
+
 function handlePeerData(data) {
   switch (data.type) {
     case "move": {
+      if (mode === "online" && typeof data.ply === "number") {
+        const have = game.history().length;
+        if (data.ply <= have) break; // one we already have
+        if (data.ply > have + 1) {
+          requestSync(); // we missed one on the way: ask for the whole list
+          break;
+        }
+      }
       const applied = game.move({ from: data.from, to: data.to, promotion: data.promotion });
+      if (!applied && mode === "online") {
+        requestSync(); // it doesn't fit our board, so we are out of step: ask, don't guess
+        break;
+      }
       // A spectator browsing earlier moves keeps their place; players snap back to live.
       if (mode !== "spectate") exitReview();
       lastMove = { from: data.from, to: data.to };
@@ -2070,6 +2206,30 @@ function handlePeerData(data) {
     }
     case "clock":
       applyOpponentClock(data.remaining);
+      break;
+    case "ping": {
+      // A heartbeat that also says how many moves they have: if we disagree, fix it.
+      if (typeof data.ply !== "number") break;
+      const mine = game.history().length;
+      if (data.ply > mine) requestSync();
+      else if (data.ply < mine) sendState();
+      break;
+    }
+    case "sync-request":
+      sendState(true);
+      break;
+    case "state":
+      catchUpFrom(data.moves);
+      break;
+    case "bye":
+      // They chose to leave (not a dropped connection): no waiting for them.
+      peerLeftForGood = true;
+      setConnLost(false);
+      if (!gameRecorded) {
+        statusEl.textContent = `${opponentName} left the game.`;
+        if (clock) clock.stop();
+      }
+      delistLiveGame();
       break;
     case "flag-check":
       // They think our clock ran out: tell them the truth about it.
@@ -3141,7 +3301,14 @@ function leaveToHome() {
   if (mode === "local" && !game.isGameOver() && !gameRecorded) {
     saveLocalProgress();
   }
-  if ((mode === "online" || mode === "spectate") && room) {
+  stopConnMonitor();
+  if (mode === "online" && room && !gameRecorded) {
+    // Leaving on purpose, not a dropped connection: say so, and give the message a moment
+    // to get out before the connection closes (a close can overtake it).
+    const leaving = room;
+    leaving.send({ type: "bye" });
+    setTimeout(() => leaving.close(), 400);
+  } else if ((mode === "online" || mode === "spectate") && room) {
     room.close();
   }
   delistLiveGame();
@@ -3723,7 +3890,8 @@ el("watch-code-input").addEventListener("keydown", (e) => {
 });
 
 // Best-effort cleanup if the host just closes the tab mid-game.
-window.addEventListener("pagehide", () => {
+window.addEventListener("pagehide", (e) => {
+  if (!e.persisted && mode === "online" && room && !gameRecorded) room.send({ type: "bye" }); // the tab is closing for good
   delistLiveGame();
   delistOpenGame();
 });

@@ -600,22 +600,36 @@ export async function sendFriendRequest(rawName) {
   const name = (rawName || "").trim();
   if (!name) return { ok: false, error: "Type your friend's username." };
   try {
-    const { doc, getDoc, setDoc, updateDoc, serverTimestamp } = state.store;
+    const { doc, getDoc, getDocs, setDoc, updateDoc, serverTimestamp, collection, query, where } = state.store;
     const found = await getDoc(doc(state.db, "usernames", name.toLowerCase()));
     if (!found.exists()) return { ok: false, error: `No player is called “${name}”. Check the spelling.` };
     const them = found.data();
     if (them.uid === me.uid) return { ok: false, error: "That's you!" };
     const mine = doc(state.db, "friendRequests", `${me.uid}_${them.uid}`);
     const theirs = doc(state.db, "friendRequests", `${them.uid}_${me.uid}`);
-    const [a, b] = await Promise.all([getDoc(mine), getDoc(theirs)]);
-    if ((a.exists() && a.data().status === "accepted") || (b.exists() && b.data().status === "accepted")) {
+    // Look for an existing request between the two of you with QUERIES about your own id
+    // (the rules allow those). Reading a document that doesn't exist yet would be refused.
+    const col = collection(state.db, "friendRequests");
+    const [sent, received] = await Promise.all([
+      getDocs(query(col, where("fromUid", "==", me.uid))),
+      getDocs(query(col, where("toUid", "==", me.uid))),
+    ]);
+    let a = null; // what you already sent them
+    let b = null; // what they already sent you
+    sent.forEach((d) => {
+      if (d.data().toUid === them.uid) a = d.data();
+    });
+    received.forEach((d) => {
+      if (d.data().fromUid === them.uid) b = d.data();
+    });
+    if ((a && a.status === "accepted") || (b && b.status === "accepted")) {
       return { ok: false, error: `You and ${them.name || name} are already friends.` };
     }
-    if (b.exists() && b.data().status === "pending") {
+    if (b && b.status === "pending") {
       await updateDoc(theirs, { status: "accepted" }); // they asked first: this makes it mutual
       return { ok: true, became: "friends", name: them.name || name };
     }
-    if (a.exists()) return { ok: false, error: `You already asked ${them.name || name}. They need to accept.` };
+    if (a) return { ok: false, error: `You already asked ${them.name || name}. They need to accept.` };
     await setDoc(mine, {
       fromUid: me.uid,
       toUid: them.uid,
@@ -627,7 +641,7 @@ export async function sendFriendRequest(rawName) {
     return { ok: true, became: "requested", name: them.name || name };
   } catch (err) {
     console.warn("Oakwood Chess: couldn't send the friend request.", err);
-    return { ok: false, error: err?.code === "permission-denied" ? "The friends rules aren't published yet — see the README." : "Couldn't reach the database. Try again." };
+    return { ok: false, error: err?.code === "permission-denied" ? "The database refused this (permission denied). Make sure the latest firestore.rules from the README are published." : "Couldn't reach the database. Try again." };
   }
 }
 

@@ -495,6 +495,31 @@ after sharing a code. Two things now handle this:
 - Coming back to the app (switching back to the tab) also triggers a
   reconnect attempt immediately, rather than waiting.
 
+### When the connection drops during a game
+
+Online games used to fail silently: a move would be sent once and, if the connection
+had quietly died, never arrive — with no message on either phone. Now:
+
+- **Every move is numbered.** A move that arrives out of order, or doesn't fit the
+  board, makes the phone ask for the full move list instead of ignoring it.
+- **A heartbeat every 3 seconds** carries each phone's move count. If the counts
+  disagree (a move was lost), the phone that is behind catches up on its own within a
+  few seconds — no action needed.
+- **A banner on both phones.** If nothing has been heard from the other player for
+  9 seconds, a yellow banner appears ("Lost connection to NAME … your moves are
+  kept"). It clears by itself when the connection is back.
+- **Automatic reconnection.** The joining phone redials the host every few seconds on
+  a fresh connection (there is also a **Reconnect now** button). The host recognises
+  the same player by a private token and gives them their seat back, so the **game
+  carries on** — it does not restart, the moves are compared, and anything missed is
+  filled in. Moves made while disconnected are kept and delivered afterwards. The
+  clocks keep running on each phone during an outage.
+- **Leaving on purpose is different.** Choosing Home (or closing the tab) sends a
+  "left the game" message, so the other player isn't left waiting.
+- **Limits.** If both phones are offline for a long time, the banner stays until one
+  returns. If the page is reloaded or closed, the game is gone (no saved games).
+  The host must keep the app open: its phone sleeping drops the room too.
+
 One thing this can't fix: some messaging apps (Instagram, Facebook, etc.)
 open shared links in their own in-app browser, which occasionally blocks
 the WebRTC connection outright. If a link opened that way doesn't connect,
@@ -848,7 +873,9 @@ Home screen / Install app* again.
 - Online play needs both players' browsers to reach the public PeerJS
   broker (`0.peerjs.com`) to establish the connection; a very locked-down
   corporate/school network can sometimes block WebRTC.
-- If your friend closes the tab, the game ends — there's no reconnect or
-  saved-game state (by design, to keep this a small, serverless project).
+- If your friend *closes the tab or leaves the game on purpose*, you're told at once
+  and the game ends. If their **connection drops** (a Wi-Fi/mobile switch, a sleeping
+  phone) the game waits for them — see *When the connection drops during a game*.
+  There is still no saved game: if the page is reloaded or closed, the game is gone.
 - Game Review and spectator commentary use Stockfish when its files are in
   `vendor/stockfish/` (or the demo's copy), otherwise the built-in engine (see *Game Review*).

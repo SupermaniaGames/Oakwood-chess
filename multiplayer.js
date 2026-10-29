@@ -69,10 +69,11 @@ export function checkRelayAvailable(timeoutMs = 6000) {
 const SPECTATOR_EMOJIS = ["👏", "🔥", "👑", "😱"];
 
 export class Room {
-  constructor({ onOpen, onConnected, onConnectFailed, onData, onPeerLeft, onError, onSpectatorCountChange, onSpectatorJoin }) {
+  constructor({ onOpen, onConnected, onConnectFailed, onResumed, onData, onPeerLeft, onError, onSpectatorCountChange, onSpectatorJoin }) {
     this.onOpen = onOpen;
     this.onConnected = onConnected;
     this.onConnectFailed = onConnectFailed; // a connection closed before it ever opened
+    this.onResumed = onResumed; // the same friend is back on a fresh connection (the game goes on)
     this.onData = onData;
     this.onPeerLeft = onPeerLeft;
     this.onError = onError;
@@ -89,6 +90,22 @@ export class Room {
     this.spectatorConns = []; // read-only watchers (host side only)
     this.isHost = false;
     this.isSpectator = false;
+    // Coming back after a dropped connection: the joining player has a secret token
+    // that the host remembers, so only the SAME player can take the seat back, and
+    // the game carries on instead of starting again.
+    this.token = Math.random().toString(36).slice(2, 12);
+    this.guestToken = "";
+    this.remoteId = ""; // the host's id, for redialing
+    this.lastRecvAt = Date.now(); // when we last heard anything from the opponent
+    this._redialPending = false;
+  }
+
+  // How long (ms) it has been since the opponent last sent us anything at all.
+  silentFor() {
+    return Date.now() - this.lastRecvAt;
+  }
+  touch() {
+    this.lastRecvAt = Date.now();
   }
 
   // id: a short custom room code. Retrying with a new code on collision is
@@ -108,13 +125,19 @@ export class Room {
     this.isHost = false;
     this.isSpectator = false;
     if (this.peer) this.peer.destroy();
+    this.remoteId = hostId;
     this.peer = new Peer({ config: ICE_CONFIG });
     this.peer.on("open", () => {
-      // "open" fires again each time the broker connection is re-made. Keep the
-      // connection we already have, or the game would split across two of them.
+      // The broker connection was re-made because we asked for a redial.
+      if (this._redialPending) {
+        this._redialPending = false;
+        this._dial(true);
+        return;
+      }
+      // "open" also fires again each time the broker connection is re-made on its
+      // own. Keep the connection we already have, or the game would split across two.
       if (this.conn && !this.conn._dead) return;
-      const conn = this.peer.connect(hostId, { reliable: true });
-      this._bindOpponent(conn);
+      this._dial(false);
     });
     this.peer.on("error", (err) => this.onError && this.onError(err));
     this._watchDisconnect();
@@ -174,14 +197,66 @@ export class Room {
 
   // Host side only: routes an incoming connection to either "the opponent"
   // (the first non-spectator connection) or the spectator list.
+  // Dial the host. `resume` = we were already playing and are coming back.
+  _dial(resume) {
+    const conn = this.peer.connect(this.remoteId, {
+      reliable: true,
+      metadata: { role: "player", token: this.token, resume: !!resume },
+    });
+    const old = this.conn;
+    this._bindOpponent(conn, { resume: !!resume });
+    if (old && old !== conn) {
+      old._dead = true; // replaced: its closing is not "the friend left"
+      try {
+        old.close();
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  // Joining player only: the connection looks dead, so open a new one to the host.
+  // Returns false if there is nothing to redial.
+  redial() {
+    if (this.isHost || this.isSpectator || !this.peer || this.peer.destroyed || !this.remoteId) return false;
+    if (this.peer.disconnected || !this.peer.open) {
+      this._redialPending = true; // dial once the matchmaking connection is back
+      try {
+        this.peer.reconnect();
+      } catch {
+        this._redialPending = false;
+        return false;
+      }
+      return true;
+    }
+    this._dial(true);
+    return true;
+  }
+
   _acceptIncoming(conn) {
     const isSpectatorConn = conn.metadata && conn.metadata.role === "spectator";
+    const token = conn.metadata && conn.metadata.token;
+    // The same player coming back on a new connection (theirs died): give them
+    // their seat back without restarting anything.
+    if (!isSpectatorConn && this.conn && token && this.guestToken && token === this.guestToken) {
+      const seat = this.conn;
+      this.conn = null;
+      seat._dead = true;
+      try {
+        seat.close();
+      } catch {
+        /* already gone */
+      }
+      this._bindOpponent(conn, { resume: true });
+      return;
+    }
     if (!isSpectatorConn) {
       // The seat is free — or held by an attempt that never connected (a failed
       // or abandoned try by the same friend). A newer attempt takes it over, so
       // retrying works instead of "this room already has two players".
       const seat = this.conn;
       if (!seat || (!seat._wasOpen && !seat.open)) {
+        if (token) this.guestToken = token;
         this.conn = null;
         if (seat) {
           seat._dead = true;
@@ -278,20 +353,24 @@ export class Room {
   _mirrorToSpectators(message, from) {
     if (!this.isHost) return;
     // Clock bookkeeping between the two players isn't for spectators.
-    if (message && (message.type === "clock" || message.type === "flag-check")) return;
+    if (message && ["clock", "flag-check", "ping", "sync-request", "state", "bye"].includes(message.type)) return;
     for (const conn of this.spectatorConns) {
       if (conn.open) conn.send({ ...message, _from: from });
     }
   }
 
-  _bindOpponent(conn) {
+  _bindOpponent(conn, { resume = false } = {}) {
     this.conn = conn;
     conn.on("open", () => {
       conn._wasOpen = true;
-      if (this.conn === conn && this.onConnected) this.onConnected();
+      this.touch();
+      if (this.conn !== conn) return;
+      if (resume) this.onResumed && this.onResumed();
+      else this.onConnected && this.onConnected();
     });
     conn.on("data", (data) => {
       if (this.conn !== conn) return; // a connection we've replaced
+      this.touch();
       // Relay the opponent's moves/chat out to spectators too — without
       // this, spectators would only ever see the host's own moves.
       this._mirrorToSpectators(data, "guest");
@@ -320,9 +399,14 @@ export class Room {
   // message out to every connected spectator, so their board stays in
   // sync automatically with zero extra work at each call site.
   send(message) {
-    if (this.isSpectator) return; // read-only, never sends game data
-    if (this.conn && this.conn.open) this.conn.send(message);
+    if (this.isSpectator) return false; // read-only, never sends game data
+    let sent = false;
+    if (this.conn && this.conn.open) {
+      this.conn.send(message);
+      sent = true;
+    }
     this._mirrorToSpectators(message, "host");
+    return sent; // false = nobody was listening (the opponent's connection isn't open)
   }
 
   // Spectator side: send a reaction to the host, who relays it to the other
